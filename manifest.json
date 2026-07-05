@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAu//g8FKMqrWjy7n8Fr23wYYbxo4FVkvQFqeiIaublUMWNDPUJB4Q+DEheqiGiCSmHIUFMP8E9mApgZVM+QSi9OqZG3uLy6lbbo0PqttexVi3E3z3ZpW0RdLUudXQt6gIj4WIOXu8zW1qodthjqGaXW/yuAWQcfhFdGFmHjeKxtDp3Zv92wIhvc4i21EynHj6FOi4P97mHF1bKRiy+by6U5sUit5HsPl3KAaOv6D59GXm+wR/bi0CCWVh186X9XD/512oURirBLN0T8yrTRj4k335G8xunGW9FSOHihpJ1DPahe0EpOPQ0JqsMbQhbF/828McMYJLkrugy0ABNWVGKQIDAQAB",
+  "name": "AI Bridge (dev)",
+  "version": "0.2.0",
+  "description": "Bridge to ChatGPT/Gemini via the logged-in web session; pluggable providers.",
+  "permissions": ["scripting", "tabs", "storage", "sidePanel", "nativeMessaging", "alarms"],
+  "host_permissions": ["https://chatgpt.com/*", "https://gemini.google.com/*", "https://*.googleusercontent.com/*", "https://*.usercontent.google.com/*", "https://lh3.google.com/*", "https://*.oaiusercontent.com/*"],
+  "background": { "service_worker": "src/background.js", "type": "module" },
+  "action": { "default_title": "AI Bridge" },
+  "side_panel": { "default_path": "src/sidepanel.html" },
+  "content_scripts": [
+    {
+      "matches": ["https://chatgpt.com/*", "https://gemini.google.com/*"],
+      "js": ["src/interceptor.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://chatgpt.com/*", "https://gemini.google.com/*"],
+      "js": ["src/content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["src/shared.js", "src/parsers.js", "src/drivers/index.js", "src/drivers/chatgpt.js", "src/drivers/gemini.js"],
+      "matches": ["https://chatgpt.com/*", "https://gemini.google.com/*"]
+    }
+  ]
+}
