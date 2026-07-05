@@ -66,6 +66,12 @@ powershell -ExecutionPolicy Bypass -File host\install.ps1
 curl http://127.0.0.1:8765/health
 ```
 
+### Uninstall
+```powershell
+powershell -ExecutionPolicy Bypass -File host\uninstall.ps1   # removes the host + its generated files
+```
+Then `chrome://extensions` → **AI Bridge (dev)** → **Remove**, and delete the repo folder if desired.
+
 ## Usage (HTTP API)
 
 ```bash

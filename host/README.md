@@ -48,6 +48,15 @@ Re-run `install.ps1` any time to change these, then reload the extension.
 
 (These are baked into the generated `aibridge-host.bat` as env vars.)
 
+## Uninstall
+
+```powershell
+powershell -ExecutionPolicy Bypass -File host\uninstall.ps1
+```
+Removes the registry key and the generated `com.aibridge.host.json` + `aibridge-host.bat`.
+Then remove the extension at `chrome://extensions` → **AI Bridge (dev)** → **Remove**, and delete the
+repo folder if you no longer need it. (Node.js is left untouched.)
+
 ## API
 
 ### `POST /ask`
