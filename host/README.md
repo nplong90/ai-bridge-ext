@@ -78,6 +78,22 @@ repo folder if you no longer need it. (Node.js is left untouched.)
 { "text": "Xin chào", "lang": "vi" }   // -> { ok, audio:{dataUrl,mimeType} }
 ```
 
+### `POST /ask-file`
+
+Upload a file to Gemini with an optional prompt. Raw file bytes go in the request body; metadata in the query string.
+
+- **Query params:**
+  - `mime` (required): MIME type (e.g., `application/pdf`, `image/png`). See [src/config/gemini-upload.json](../src/config/gemini-upload.json) for the full list of supported formats.
+  - `prompt` (optional): text prompt to accompany the file.
+  - `filename` (optional): display name of the file (default: `upload.bin`).
+  - `lang` (optional): language/accent for the response.
+  - `path` (optional): upload strategy — `A` (direct), `B` (drag-drop fallback), or `auto` (try A, fall back to B; default).
+- **Body:** raw file bytes (via `--data-binary @file`).
+- **Response:** `{ ok, text, conversationId, provider: "gemini" }` — caller parses the JSON result, not the host.
+- **Header:** if `AIBRIDGE_KEY` is set, include `x-aibridge-key: <key>`.
+
+Note: the host holds uploaded bytes for ~3 minutes, then discards them. When Gemini's upload UI or schema changes, edit the `selectors` and `supportedMime` in `src/config/gemini-upload.json` — do not modify the host code.
+
 ### `GET /health`
 Liveness check.
 
