@@ -84,10 +84,9 @@ curl -s http://127.0.0.1:8765/ask -H "content-type: application/json" \
 
 Send a file + prompt to Gemini:
 ```bash
-curl -s http://127.0.0.1:8765/ask-file \
+curl -s "http://127.0.0.1:8765/ask-file?prompt=Summarize%20this&mime=application/pdf&filename=document.pdf&path=auto" \
   -H "x-aibridge-key: <key-if-set>" \
-  --data-binary "@document.pdf" \
-  "?prompt=Summarize%20this&mime=application/pdf&filename=document.pdf&path=auto"
+  --data-binary "@document.pdf"
 # -> { ok, text, conversationId, provider: "gemini" }
 ```
 
