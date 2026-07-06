@@ -196,25 +196,27 @@ export const geminiDriver = {
   // file input and firing change (the page then runs the exact upload we saw in the HAR and
   // builds its own f.req). Robust to schema changes; needs a foreground tab.
   async attachViaDrop(bytes, mime, filename, cfg) {
-    const input = document.querySelector(cfg.selectors.dropZone);
-    if (!input) {
-      // DIAG: the configured selector matched nothing — survey the DOM so we learn the real
-      // upload affordance (persistent hidden input? on-demand? a drop-zone div? an "+" button?).
-      const inputs = [...document.querySelectorAll("input[type=file]")];
-      const uploadish = [...document.querySelectorAll("button,[role=button],[aria-label],[data-test-id]")]
-        .filter((el) => /upload|attach|file|image|add|plus|paperclip|tệp|tải/i.test((el.getAttribute("aria-label") || "") + " " + (el.getAttribute("data-test-id") || "") + " " + el.className))
-        .slice(0, 12)
-        .map((el) => ({ tag: el.tagName, label: el.getAttribute("aria-label"), testid: el.getAttribute("data-test-id"), cls: String(el.className).slice(0, 60) }));
-      console.log("[cgw-diag] PathB dropZone selector matched nothing:", cfg.selectors.dropZone);
-      console.log("[cgw-diag] PathB input[type=file] count:", inputs.length, inputs.map((i) => i.outerHTML.slice(0, 160)));
-      console.log("[cgw-diag] PathB upload-ish elements:", uploadish);
-      return false;
-    }
+    // Gemini has no <input type=file> (verified: count 0); it relies on a drop handler on the
+    // input area — that's why a manual OS drag-drop works. Replicate exactly that: build a File,
+    // wrap it in a DataTransfer, and dispatch the dragenter/dragover/drop sequence onto the
+    // composer so Gemini's own uploader runs (it then does the resumable upload + builds f.req).
+    const target = document.querySelector(cfg.selectors.composer)
+      || document.querySelector(cfg.selectors.dropTarget || "main")
+      || document.body;
+    if (!target) { console.log("[cgw-diag] PathB no drop target"); return false; }
     const file = new File([bytes], filename, { type: mime });
     const dt = new DataTransfer();
     dt.items.add(file);
-    input.files = dt.files;
-    input.dispatchEvent(new Event("change", { bubbles: true }));
+    // Some Chrome builds ignore `dataTransfer` in the DragEvent constructor; force it on if so.
+    const fire = (type) => {
+      let ev;
+      try { ev = new DragEvent(type, { bubbles: true, cancelable: true, composed: true, dataTransfer: dt }); }
+      catch { ev = new Event(type, { bubbles: true, cancelable: true }); }
+      if (!ev.dataTransfer) { try { Object.defineProperty(ev, "dataTransfer", { value: dt }); } catch { /* readonly */ } }
+      target.dispatchEvent(ev);
+    };
+    fire("dragenter"); fire("dragover"); fire("drop");
+    console.log("[cgw-diag] PathB dispatched synthetic drop on", target.tagName, "class:", String(target.className).slice(0, 60));
     return true;
   },
 
@@ -223,7 +225,8 @@ export const geminiDriver = {
     if (!attached) throw new Error("DROP_ATTACH_FAILED");
     // Wait for the page's own upload to finish before sending (the composer's send stays disabled
     // until the attachment resolves). Reuse startSend which waits for the send button.
-    await sleep(1500);
+    await sleep(3000);
+    console.log("[cgw-diag] PathB post-drop composer text:", (document.querySelector(cfg.selectors.composer) || {}).textContent, "| send btn:", !!document.querySelector(".send-button button, button[aria-label='Send message']"));
     await this.startSend(prompt);
     const raw = await ctx.waitForResponse((url) => /\/StreamGenerate/.test(url), 120000);
     if (!raw) throw new Error("NO_RESPONSE_CAPTURED");
