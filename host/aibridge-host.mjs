@@ -11,6 +11,7 @@
 //   POST /ask-file (raw bytes body, meta in query) -> { ok, text, conversationId, images, audio?, provider }
 //   GET  /blob/<id>          -> raw bytes held for the extension to fetch (one-shot)
 import http from "node:http";
+import crypto from "node:crypto";
 
 // True only when this file is the process entry point (Chrome/launcher run it directly) — false
 // when another module (e.g. the test file) imports it, so importing never binds the port.
@@ -75,11 +76,16 @@ function fail(res, code, error) {
   res.end(JSON.stringify({ ok: false, error }));
 }
 
+// A strict mime token: type/subtype of word/./+/- chars only. Rejects CR/LF and anything else
+// that could be smuggled into a response header (entry.mime is written to content-type verbatim).
+const MIME_RE = /^[a-zA-Z0-9][\w.+-]*\/[\w.+-]+$/;
+
 // Parse a POST /ask-file: meta in the query string, raw file bytes in the body. Kept pure so it
 // can be unit-tested without spinning up the server.
 export function parseAskFileRequest({ query, bodyBuffer }) {
   const mime = query.get("mime");
   if (!bodyBuffer || bodyBuffer.length === 0 || !mime) throw new Error("BAD_REQUEST");
+  if (!MIME_RE.test(mime)) throw new Error("BAD_REQUEST");
   return {
     prompt: query.get("prompt") || "",
     mime,
@@ -121,6 +127,7 @@ const server = http.createServer((req, res) => {
   // the gemini.google.com content script can fetch it without mixed-content errors). One-shot: the
   // entry is dropped after it's served so bytes don't linger in memory.
   if (req.method === "GET" && req.url.startsWith("/blob/")) {
+    if (KEY && req.headers["x-aibridge-key"] !== KEY) return fail(res, 401, "UNAUTHORIZED");
     const id = req.url.slice("/blob/".length);
     const entry = blobs.get(id);
     if (!entry) return fail(res, 404, "NO_BLOB");
@@ -143,7 +150,7 @@ const server = http.createServer((req, res) => {
         parsed = parseAskFileRequest({ query, bodyBuffer: Buffer.concat(chunks) });
       } catch (e) { return fail(res, 400, String(e.message || e)); }
       const id = seq++;
-      const blobId = "b" + id;
+      const blobId = crypto.randomUUID();
       // hold bytes ~3 min; if the extension never fetches, drop them
       const timer = setTimeout(() => blobs.delete(blobId), 180000);
       blobs.set(blobId, { bytes: parsed.bytes, mime: parsed.mime, timer });

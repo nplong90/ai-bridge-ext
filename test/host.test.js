@@ -17,3 +17,17 @@ test("parseAskFileRequest reads meta from query + bytes from body", () => {
 test("parseAskFileRequest rejects empty body", () => {
   assert.throws(() => parseAskFileRequest({ query: new URLSearchParams("mime=audio/ogg"), bodyBuffer: Buffer.alloc(0) }), /BAD_REQUEST/);
 });
+
+test("parseAskFileRequest rejects a mime with CRLF (header injection)", () => {
+  const query = new URLSearchParams();
+  query.set("mime", "audio/ogg\r\nX: y"); // raw CRLF kept in the value
+  assert.throws(() => parseAskFileRequest({ query, bodyBuffer: Buffer.from([1]) }), /BAD_REQUEST/);
+});
+
+test("parseAskFileRequest accepts a normal structured mime", () => {
+  const r = parseAskFileRequest({
+    query: new URLSearchParams("mime=application/vnd.ms-excel"),
+    bodyBuffer: Buffer.from([1]),
+  });
+  assert.equal(r.mime, "application/vnd.ms-excel");
+});
