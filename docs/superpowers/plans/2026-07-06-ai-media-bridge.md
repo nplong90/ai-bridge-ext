@@ -939,6 +939,164 @@ git commit -m "docs: document /ask-file endpoint and config"
 
 ---
 
+---
+
+## Milestone 3 — UI test trong extension (file picker side panel)
+
+### Task 13: Đính file trong side panel để test bằng tay
+
+Cho phép người dùng chọn/kéo-thả file ngay trong side panel (không cần host/curl). Side panel đọc bytes → gửi thẳng background → `askFile()` (Task 8). Đây vừa là tính năng vừa là UI để test Path A/B bằng tay. File-upload chỉ dùng Gemini.
+
+**Files:**
+- Modify: `src/sidepanel.html`
+- Modify: `src/sidepanel.js`
+- Modify: `src/content.js` (cho phép nhận bytes inline base64, không chỉ blobUrl)
+- Modify: `src/background.js` (handler `ASK-FILE-FROM-PANEL` + truyền `bytesB64` qua `askFile`)
+
+**Interfaces:**
+- Consumes: `askFile(payload)`, `sendAskFile` (Task 8); ASK-FILE listener (Task 7/10).
+- Produces: message `ASK-FILE-FROM-PANEL { prompt, mime, filename, bytesB64, path }`; ASK-FILE message giờ chấp nhận `bytesB64` HOẶC `blobUrl`.
+
+- [ ] **Step 1: content.js — nhận bytes inline hoặc blobUrl**
+
+Trong `src/content.js` ASK-FILE listener, thay dòng lấy bytes hiện tại:
+```js
+const bytes = new Uint8Array(await (await fetch(msg.blobUrl)).arrayBuffer());
+```
+bằng:
+```js
+let bytes;
+if (msg.blobUrl) {
+  bytes = new Uint8Array(await (await fetch(msg.blobUrl)).arrayBuffer());
+} else if (msg.bytesB64) {
+  const bin = atob(msg.bytesB64);
+  bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+} else {
+  throw new Error("NO_FILE_BYTES");
+}
+```
+
+- [ ] **Step 2: background.js — pass bytesB64 qua askFile + handler panel**
+
+Trong `askFile(payload)`, sửa lời gọi `sendAskFile` để chuyển tiếp cả hai transport (chỉ một cái có giá trị):
+```js
+      const resp = await sendAskFile(tabId, {
+        prompt: payload.prompt, mime: payload.mime, filename: payload.filename,
+        path: payload.path, blobUrl: payload.blobUrl, bytesB64: payload.bytesB64,
+      });
+```
+Thêm handler mới trong `chrome.runtime.onMessage.addListener` (cạnh `ASK-FROM-PANEL`), mirror pattern writeState + sendResponse của nó:
+```js
+  if (msg && msg.type === "ASK-FILE-FROM-PANEL") {
+    const provider = "gemini"; // file upload is Gemini-only
+    writeState({ status: "sending", prompt: msg.prompt, text: "", error: "", provider, images: [] });
+    askFile({ prompt: msg.prompt, mime: msg.mime, filename: msg.filename, path: msg.path || "auto", bytesB64: msg.bytesB64 }).then(
+      (r) => { writeState({ status: "ok", prompt: msg.prompt, text: r.text, error: "", provider, images: [] }); sendResponse({ ok: true, text: r.text, provider }); },
+      (e) => { const error = String(e.message || e); writeState({ status: "error", prompt: msg.prompt, text: "", error, provider, images: [] }); sendResponse({ ok: false, error, provider }); },
+    );
+    return true;
+  }
+```
+
+- [ ] **Step 3: sidepanel.html — nút đính file + tên file**
+
+Trong `.composer-foot`, thêm nút đính file bên trái nút Gửi (giữ layout hiện có), và một hàng hiển thị tên file dưới textarea. Thêm vào trong `.composer`:
+```html
+      <input id="file" type="file" hidden />
+```
+Sửa `.composer-foot` để thêm nút 📎 cạnh hint (trái), giữ nút send bên phải:
+```html
+      <div class="composer-foot">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <button id="attach" class="new-btn" type="button" title="Đính file gửi lên Gemini">📎 File</button>
+          <span id="filename" class="hint"></span>
+        </div>
+        <button id="send" class="send" type="button">
+          <span class="spinner"></span>
+          <span class="send-label">Gửi</span>
+        </button>
+      </div>
+```
+(Xoá hàng hint `Ctrl+Enter` cũ trong composer-foot nếu trùng — giữ một cấu trúc foot duy nhất như trên.)
+
+- [ ] **Step 4: sidepanel.js — đọc file → gửi ASK-FILE-FROM-PANEL**
+
+Thêm gần đầu (sau các `$` khai báo):
+```js
+const fileEl = $("file");
+const attachBtn = $("attach");
+const filenameEl = $("filename");
+let attached = null; // { bytesB64, mime, filename }
+
+function bytesToB64(buf) {
+  const bytes = new Uint8Array(buf);
+  let bin = "";
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  return btoa(bin);
+}
+
+attachBtn.addEventListener("click", () => fileEl.click());
+fileEl.addEventListener("change", async () => {
+  const f = fileEl.files && fileEl.files[0];
+  if (!f) { attached = null; filenameEl.textContent = ""; return; }
+  const buf = await f.arrayBuffer();
+  attached = { bytesB64: bytesToB64(buf), mime: f.type || "application/octet-stream", filename: f.name };
+  filenameEl.textContent = f.name;
+});
+
+// Drag-drop onto the composer.
+const composerEl = document.querySelector(".composer");
+composerEl.addEventListener("dragover", (e) => { e.preventDefault(); });
+composerEl.addEventListener("drop", async (e) => {
+  e.preventDefault();
+  const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+  if (!f) return;
+  const buf = await f.arrayBuffer();
+  attached = { bytesB64: bytesToB64(buf), mime: f.type || "application/octet-stream", filename: f.name };
+  filenameEl.textContent = f.name;
+});
+```
+Sửa `send()` để rẽ nhánh khi có file:
+```js
+function send() {
+  const prompt = promptEl.value.trim();
+  if (!prompt && !attached) { promptEl.focus(); return; }
+  setLoading(true);
+  setStatus("info", "Đang tạo chat mới và gửi…");
+  answerEl.classList.remove("show");
+  if (attached) {
+    chrome.runtime.sendMessage(
+      { type: "ASK-FILE-FROM-PANEL", prompt, mime: attached.mime, filename: attached.filename, bytesB64: attached.bytesB64, path: "auto" },
+      () => void chrome.runtime.lastError,
+    );
+  } else {
+    chrome.runtime.sendMessage({ type: "ASK-FROM-PANEL", prompt, provider: providerEl.value }, () => void chrome.runtime.lastError);
+  }
+}
+```
+Trong `newBtn` handler, reset file: thêm `attached = null; filenameEl.textContent = ""; fileEl.value = "";`.
+
+- [ ] **Step 5: Verify unit suite (không hồi quy)**
+
+Run: `node --test`
+Expected: PASS (43/43; code mới là browser-only, không phá test thuần).
+
+- [ ] **Step 6: Live test qua extension (thủ công)**
+
+Reload extension, mở side panel, đăng nhập Gemini. Bấm 📎 chọn (hoặc kéo-thả) một file audio nhỏ, nhập prompt "viết nội dung file ra text", bấm Gửi.
+Expected: status "Đang gửi…" → khung trả lời hiện text Gemini sinh. Đây là đường test bằng tay không cần curl/host.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add src/sidepanel.html src/sidepanel.js src/content.js src/background.js
+git commit -m "feat: attach/drag-drop file in side panel to test upload via extension"
+```
+
+---
+
 ## Ghi chú rủi ro triển khai
 
 - **`session_blob` trong f.req (Path A):** khả năng cao Gemini từ chối StreamGenerate forge cho chat mới nếu blob rỗng. Nếu Task 7 Step 5 cho thấy A luôn hỏng, KHÔNG cố sửa lâu — Path B (Task 10) là đường chính thực dụng; A vẫn giữ để thử trước và circuit breaker sẽ tự né sau vài lần hỏng.
