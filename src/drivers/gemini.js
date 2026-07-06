@@ -27,6 +27,25 @@ export function buildGeminiDeleteRequest({ convId, at, bl, fsid, reqid }) {
   return { url: ORIGIN + "/_/BardChatUi/data/batchexecute?" + qs.toString(), body };
 }
 
+// Build the StreamGenerate request that Path A POSTs directly (no composer). The inner f.req
+// structure was reverse-engineered from a real upload trace (see specs). `sessionBlob` is the
+// per-conversation "!Wlml…" token the page normally injects; for a fresh chat we send "" and
+// rely on Gemini accepting it — if it rejects, the driver falls back to Path B (drag-drop).
+export function buildGeminiGenerateRequest({ prompt, fileToken, mime, filename, at, bl, fsid, reqid, sessionBlob = "", cfg }) {
+  const inner = [
+    [ prompt, 0, null, [[[fileToken, cfg.freq.fileMagic, null, mime], filename]], null, null, 0 ],
+    [cfg.generate.hl],
+    ["", "", "", null, null, null, null, null, null, ""],
+    sessionBlob,
+  ];
+  const freq = JSON.stringify([null, JSON.stringify(inner)]);
+  const body = `f.req=${encodeURIComponent(freq)}&at=${encodeURIComponent(at)}`;
+  const qs = new URLSearchParams({
+    bl, "f.sid": fsid, hl: cfg.generate.hl, _reqid: String(reqid), rt: "c",
+  });
+  return { url: cfg.generate.url + "?" + qs.toString(), body };
+}
+
 export const geminiDriver = {
   id: "gemini",
   hostMatch: (h) => h === "gemini.google.com",

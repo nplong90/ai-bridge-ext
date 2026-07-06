@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { chatgptDriver } from "../src/drivers/chatgpt.js";
-import { geminiDriver, scrapeTokens, buildGeminiDeleteRequest } from "../src/drivers/gemini.js";
+import { geminiDriver, scrapeTokens, buildGeminiDeleteRequest, buildGeminiGenerateRequest } from "../src/drivers/gemini.js";
 import { DRIVERS, pickDriver, driverById, DRIVER_META } from "../src/drivers/index.js";
 
 test("chatgpt driver identity + host match", () => {
@@ -56,4 +56,25 @@ test("driverById + meta", () => {
   assert.equal(driverById("nope"), null);
   assert.equal(DRIVERS.length, 2);
   assert.deepEqual(DRIVER_META.map((d) => d.id).sort(), ["chatgpt", "gemini"]);
+});
+
+test("buildGeminiGenerateRequest embeds prompt, token, mime, filename in f.req", () => {
+  const cfg = {
+    generate: { url: "https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate", hl: "en" },
+    freq: { fileMagic: 4 },
+  };
+  const { url, body } = buildGeminiGenerateRequest({
+    prompt: "đọc nội dung", fileToken: "/contrib_service/ttl_1d/TOK", mime: "audio/ogg",
+    filename: "chunk1.ogg", at: "AT_TOK", bl: "BL", fsid: "SID", reqid: 12345, cfg,
+  });
+  assert.ok(url.startsWith(cfg.generate.url));
+  assert.ok(url.includes("f.sid=SID"));
+  assert.ok(url.includes("_reqid=12345"));
+  assert.ok(url.includes("rt=c"));
+  const decoded = decodeURIComponent(body);
+  assert.ok(decoded.includes("đọc nội dung"));
+  assert.ok(decoded.includes("/contrib_service/ttl_1d/TOK"));
+  assert.ok(decoded.includes("audio/ogg"));
+  assert.ok(decoded.includes("chunk1.ogg"));
+  assert.ok(body.includes("at=AT_TOK"));
 });
