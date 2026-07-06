@@ -66,7 +66,16 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       if (!driver || driver.id !== "gemini") throw new Error("NO_GEMINI_DRIVER");
       if (!(await driver.isLoggedIn())) throw new Error("NOT_AUTHENTICATED");
       const cfg = await (await fetch(chrome.runtime.getURL("src/config/gemini-upload.json"))).json();
-      const bytes = new Uint8Array(await (await fetch(msg.blobUrl)).arrayBuffer());
+      let bytes;
+      if (msg.blobUrl) {
+        bytes = new Uint8Array(await (await fetch(msg.blobUrl)).arrayBuffer());
+      } else if (msg.bytesB64) {
+        const bin = atob(msg.bytesB64);
+        bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      } else {
+        throw new Error("NO_FILE_BYTES");
+      }
       netBuffer.length = 0;
       pathPref ??= (await geminiModule).createPathPreference();
       const forced = msg.path === "A" || msg.path === "B" ? msg.path : null;

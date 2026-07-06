@@ -237,7 +237,7 @@ function askFile(payload) {
     try {
       const resp = await sendAskFile(tabId, {
         prompt: payload.prompt, mime: payload.mime, filename: payload.filename,
-        path: payload.path, blobUrl: payload.blobUrl,
+        path: payload.path, blobUrl: payload.blobUrl, bytesB64: payload.bytesB64,
       });
       return { text: resp.text, conversationId: resp.conversationId, provider: "gemini" };
     } finally {
@@ -261,6 +261,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         writeState({ status: "ok", prompt: msg.prompt, text: r.text, error: "", provider, images });
         sendResponse({ ok: true, text: r.text, images, provider });
       },
+      (e) => { const error = String(e.message || e); writeState({ status: "error", prompt: msg.prompt, text: "", error, provider, images: [] }); sendResponse({ ok: false, error, provider }); },
+    );
+    return true;
+  }
+  if (msg && msg.type === "ASK-FILE-FROM-PANEL") {
+    const provider = "gemini"; // file upload is Gemini-only
+    writeState({ status: "sending", prompt: msg.prompt, text: "", error: "", provider, images: [] });
+    askFile({ prompt: msg.prompt, mime: msg.mime, filename: msg.filename, path: msg.path || "auto", bytesB64: msg.bytesB64 }).then(
+      (r) => { writeState({ status: "ok", prompt: msg.prompt, text: r.text, error: "", provider, images: [] }); sendResponse({ ok: true, text: r.text, provider }); },
       (e) => { const error = String(e.message || e); writeState({ status: "error", prompt: msg.prompt, text: "", error, provider, images: [] }); sendResponse({ ok: false, error, provider }); },
     );
     return true;

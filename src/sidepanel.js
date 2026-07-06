@@ -14,6 +14,39 @@ const ttsBtn = $("tts");
 const voiceEl = $("voice");
 const audioEl = $("audio");
 const newBtn = $("new");
+const fileEl = $("file");
+const attachBtn = $("attach");
+const filenameEl = $("filename");
+let attached = null; // { bytesB64, mime, filename }
+
+function bytesToB64(buf) {
+  const bytes = new Uint8Array(buf);
+  let bin = "";
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  return btoa(bin);
+}
+
+attachBtn.addEventListener("click", () => fileEl.click());
+fileEl.addEventListener("change", async () => {
+  const f = fileEl.files && fileEl.files[0];
+  if (!f) { attached = null; filenameEl.textContent = ""; return; }
+  const buf = await f.arrayBuffer();
+  attached = { bytesB64: bytesToB64(buf), mime: f.type || "application/octet-stream", filename: f.name };
+  filenameEl.textContent = f.name;
+});
+
+// Drag-drop onto the composer.
+const composerEl = document.querySelector(".composer");
+composerEl.addEventListener("dragover", (e) => { e.preventDefault(); });
+composerEl.addEventListener("drop", async (e) => {
+  e.preventDefault();
+  const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+  if (!f) return;
+  const buf = await f.arrayBuffer();
+  attached = { bytesB64: bytesToB64(buf), mime: f.type || "application/octet-stream", filename: f.name };
+  filenameEl.textContent = f.name;
+});
 
 // Which providers can synthesize speech (from the driver registry).
 const AUDIO_PROVIDERS = new Set(DRIVER_META.filter((d) => d.capabilities && d.capabilities.audio).map((d) => d.id));
@@ -56,7 +89,8 @@ providerEl.addEventListener("change", () => {
   chrome.storage.local.set({ [PROVIDER_KEY]: providerEl.value });
 });
 
-if (navigator.platform.toLowerCase().includes("mac")) $("kbd-hint").textContent = "⌘";
+const kbdHintEl = $("kbd-hint");
+if (kbdHintEl && navigator.platform.toLowerCase().includes("mac")) kbdHintEl.textContent = "⌘";
 
 function setStatus(kind, text) {
   if (!kind) { statusEl.classList.remove("show"); return; }
@@ -137,12 +171,19 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 function send() {
   const prompt = promptEl.value.trim();
-  if (!prompt) { promptEl.focus(); return; }
+  if (!prompt && !attached) { promptEl.focus(); return; }
   // Optimistic; the background confirms via storage.
   setLoading(true);
   setStatus("info", "Đang tạo chat mới và gửi…");
   answerEl.classList.remove("show");
-  chrome.runtime.sendMessage({ type: "ASK-FROM-PANEL", prompt, provider: providerEl.value }, () => void chrome.runtime.lastError);
+  if (attached) {
+    chrome.runtime.sendMessage(
+      { type: "ASK-FILE-FROM-PANEL", prompt, mime: attached.mime, filename: attached.filename, bytesB64: attached.bytesB64, path: "auto" },
+      () => void chrome.runtime.lastError,
+    );
+  } else {
+    chrome.runtime.sendMessage({ type: "ASK-FROM-PANEL", prompt, provider: providerEl.value }, () => void chrome.runtime.lastError);
+  }
 }
 
 sendBtn.addEventListener("click", send);
@@ -154,6 +195,7 @@ promptEl.addEventListener("keydown", (e) => {
 newBtn.addEventListener("click", () => {
   chrome.runtime.sendMessage({ type: "CLEAR-STATE" }, () => void chrome.runtime.lastError);
   promptEl.value = "";
+  attached = null; filenameEl.textContent = ""; fileEl.value = "";
   setLoading(false);
   setStatus(null);
   resetAudio();
