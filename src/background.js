@@ -185,6 +185,14 @@ async function sendAsk(tabId, prompt) {
   if (!resp || !resp.ok) throw new Error(resp ? resp.error : "NO_RESPONSE");
   return resp;
 }
+async function sendAskFile(tabId, payload) {
+  const resp = await withTimeout(
+    chrome.tabs.sendMessage(tabId, { channel: "cgw", type: "ASK-FILE", ...payload }),
+    REQUEST_TIMEOUT_MS, "REQUEST_TIMEOUT",
+  );
+  if (!resp || !resp.ok) throw new Error(resp ? resp.error : "NO_RESPONSE");
+  return resp;
+}
 function ask(prompt, provider) {
   return queue.enqueue(async () => {
     const driver = resolveDriver(provider);
@@ -216,6 +224,25 @@ function ask(prompt, provider) {
       chrome.storage.local.set({ cgw_img_debug: { images: images.map((it) => (it.dataUrl ? "dataUrl:" + Math.round(it.dataUrl.length / 1024) + "KB" : "url:" + String(it.url).slice(0, 50))) } });
     }
     return { ...resp, images };
+  });
+}
+
+function askFile(payload) {
+  return queue.enqueue(async () => {
+    const driver = driverById("gemini"); // file upload is Gemini-only for now
+    const tabId = await ensureTab(driver);
+    await navigateNewChat(tabId, driver);
+    // Path B needs the tab foreground to render; activate it and restore afterward.
+    const prevActive = await activateTab(tabId);
+    try {
+      const resp = await sendAskFile(tabId, {
+        prompt: payload.prompt, mime: payload.mime, filename: payload.filename,
+        path: payload.path, blobUrl: payload.blobUrl,
+      });
+      return { text: resp.text, conversationId: resp.conversationId, provider: "gemini" };
+    } finally {
+      if (prevActive != null) { try { await chrome.tabs.update(prevActive, { active: true }); } catch {} }
+    }
   });
 }
 
@@ -345,6 +372,9 @@ function handleApiOp(msg) {
   const provider = msg.provider || DEFAULT_PROVIDER;
   if (msg.op === "tts") {
     return ttsGemini(msg.text, msg.lang).then((a) => (a ? { ok: true, audio: a } : { ok: false, error: "NO_AUDIO" }));
+  }
+  if (msg.op === "askfile") {
+    return askFile(msg).then((r) => ({ ok: true, text: r.text, conversationId: r.conversationId, provider: r.provider }));
   }
   if (msg.op === "ask" || !msg.op) {
     return ask(msg.prompt, provider).then(async (r) => {
