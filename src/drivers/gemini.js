@@ -165,10 +165,12 @@ export const geminiDriver = {
     const html = document.documentElement.innerHTML;
     const { at, bl, fsid } = scrapeTokens(html);
     const tokensOk = !!(at && bl && fsid);
+    console.log("[cgw-diag] PathA tokens:", { at: !!at, bl: !!bl, fsid: !!fsid, tokensOk });
     let uploadOk = false, generateStatus = 0, answer = "", conversationId = null;
     if (tokensOk) {
       const fileToken = await this.uploadFileA(bytes, mime, filename, cfg);
       uploadOk = !!fileToken;
+      console.log("[cgw-diag] PathA upload:", { uploadOk, tokenPreview: fileToken ? String(fileToken).slice(0, 40) : null });
       if (uploadOk) {
         const reqid = 100000 + Math.floor(Math.random() * 800000);
         const { url, body } = buildGeminiGenerateRequest({ prompt, fileToken, mime, filename, at, bl, fsid, reqid, cfg });
@@ -182,9 +184,11 @@ export const geminiDriver = {
         const parsed = parseGeminiStream(raw);
         answer = parsed.answer || "";
         conversationId = parsed.conversationId;
+        console.log("[cgw-diag] PathA generate:", { generateStatus, answerLen: answer.length, rawPreview: String(raw).slice(0, 400) });
       }
     }
     const verdict = classifyPathAResult({ tokensOk, uploadOk, generateStatus, answer });
+    console.log("[cgw-diag] PathA verdict:", verdict);
     return { verdict, answer, conversationId };
   },
 
@@ -193,7 +197,19 @@ export const geminiDriver = {
   // builds its own f.req). Robust to schema changes; needs a foreground tab.
   async attachViaDrop(bytes, mime, filename, cfg) {
     const input = document.querySelector(cfg.selectors.dropZone);
-    if (!input) return false;
+    if (!input) {
+      // DIAG: the configured selector matched nothing — survey the DOM so we learn the real
+      // upload affordance (persistent hidden input? on-demand? a drop-zone div? an "+" button?).
+      const inputs = [...document.querySelectorAll("input[type=file]")];
+      const uploadish = [...document.querySelectorAll("button,[role=button],[aria-label],[data-test-id]")]
+        .filter((el) => /upload|attach|file|image|add|plus|paperclip|tệp|tải/i.test((el.getAttribute("aria-label") || "") + " " + (el.getAttribute("data-test-id") || "") + " " + el.className))
+        .slice(0, 12)
+        .map((el) => ({ tag: el.tagName, label: el.getAttribute("aria-label"), testid: el.getAttribute("data-test-id"), cls: String(el.className).slice(0, 60) }));
+      console.log("[cgw-diag] PathB dropZone selector matched nothing:", cfg.selectors.dropZone);
+      console.log("[cgw-diag] PathB input[type=file] count:", inputs.length, inputs.map((i) => i.outerHTML.slice(0, 160)));
+      console.log("[cgw-diag] PathB upload-ish elements:", uploadish);
+      return false;
+    }
     const file = new File([bytes], filename, { type: mime });
     const dt = new DataTransfer();
     dt.items.add(file);
