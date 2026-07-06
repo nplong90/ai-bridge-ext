@@ -46,6 +46,32 @@ export function buildGeminiGenerateRequest({ prompt, fileToken, mime, filename, 
   return { url: cfg.generate.url + "?" + qs.toString(), body };
 }
 
+// Allowlist is advisory only — Gemini's server is the real authority. We pass any mime through
+// and just flag unknown ones so the caller can log a warning.
+export function checkMime(mime, supportedList) {
+  return { mime, supported: Array.isArray(supportedList) && supportedList.includes(mime) };
+}
+
+// Step-1 (start) of Google's resumable upload. Body carries only the filename metadata.
+export function uploadStartHeaders({ byteLength, filename, tenantId }) {
+  return {
+    headers: {
+      "X-Goog-Upload-Protocol": "resumable",
+      "X-Goog-Upload-Command": "start",
+      "X-Goog-Upload-Header-Content-Length": String(byteLength),
+      "X-Tenant-Id": tenantId,
+      "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+    },
+    body: "File name: " + filename,
+  };
+}
+
+// The finalize step returns a plain-text token like "/contrib_service/ttl_1d/…". Anything else
+// (empty, HTML error page) means the upload failed → caller triggers Path B.
+export function isUploadTokenValid(text) {
+  return typeof text === "string" && text.startsWith("/contrib_service/");
+}
+
 export const geminiDriver = {
   id: "gemini",
   hostMatch: (h) => h === "gemini.google.com",

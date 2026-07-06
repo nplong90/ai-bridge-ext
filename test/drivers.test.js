@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { chatgptDriver } from "../src/drivers/chatgpt.js";
-import { geminiDriver, scrapeTokens, buildGeminiDeleteRequest, buildGeminiGenerateRequest } from "../src/drivers/gemini.js";
+import { geminiDriver, scrapeTokens, buildGeminiDeleteRequest, buildGeminiGenerateRequest, checkMime, uploadStartHeaders, isUploadTokenValid } from "../src/drivers/gemini.js";
 import { DRIVERS, pickDriver, driverById, DRIVER_META } from "../src/drivers/index.js";
 
 test("chatgpt driver identity + host match", () => {
@@ -78,4 +78,24 @@ test("buildGeminiGenerateRequest embeds prompt, token, mime, filename in f.req",
   assert.ok(decoded.includes("audio/ogg"));
   assert.ok(decoded.includes("chunk1.ogg"));
   assert.equal(params.get("at"), "AT_TOK");
+});
+
+test("checkMime flags unsupported without blocking", () => {
+  assert.deepEqual(checkMime("audio/ogg", ["audio/ogg"]), { mime: "audio/ogg", supported: true });
+  assert.deepEqual(checkMime("application/x-weird", ["audio/ogg"]), { mime: "application/x-weird", supported: false });
+});
+
+test("uploadStartHeaders sets resumable start headers + filename body", () => {
+  const { headers, body } = uploadStartHeaders({ byteLength: 1234, filename: "a.ogg", tenantId: "bard-storage" });
+  assert.equal(headers["X-Goog-Upload-Protocol"], "resumable");
+  assert.equal(headers["X-Goog-Upload-Command"], "start");
+  assert.equal(headers["X-Goog-Upload-Header-Content-Length"], "1234");
+  assert.equal(headers["X-Tenant-Id"], "bard-storage");
+  assert.equal(body, "File name: a.ogg");
+});
+
+test("isUploadTokenValid accepts contrib_service token only", () => {
+  assert.equal(isUploadTokenValid("/contrib_service/ttl_1d/abc_XYZ"), true);
+  assert.equal(isUploadTokenValid("<html>error</html>"), false);
+  assert.equal(isUploadTokenValid(""), false);
 });
