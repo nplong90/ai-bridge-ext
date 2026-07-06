@@ -3,6 +3,12 @@
 // when the tab is backgrounded (network completes; only rendering is throttled).
 console.log("[cgw] content script loaded on", location.host);
 const registry = import(chrome.runtime.getURL("src/drivers/index.js"));
+const geminiModule = import(chrome.runtime.getURL("src/drivers/gemini.js"));
+
+// Lazy-init: content scripts aren't ES modules, so top-level await isn't available here.
+// Initialized on first ASK-FILE request; one instance per tab lifetime (remembers across
+// requests within the same tab so repeated Path A failures make later requests skip to B).
+let pathPref;
 
 // Buffer intercepted network responses forwarded by interceptor.js.
 const netBuffer = [];
@@ -62,12 +68,15 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       const cfg = await (await fetch(chrome.runtime.getURL("src/config/gemini-upload.json"))).json();
       const bytes = new Uint8Array(await (await fetch(msg.blobUrl)).arrayBuffer());
       netBuffer.length = 0;
-      const wantB = msg.path === "B";
+      pathPref ??= (await geminiModule).createPathPreference();
+      const forced = msg.path === "A" || msg.path === "B" ? msg.path : null;
+      const wantB = forced ? forced === "B" : pathPref.prefer() === "B";
       let out = null;
       if (!wantB) {
         const a = await driver.askWithFile({ bytes, mime: msg.mime, filename: msg.filename, prompt: msg.prompt, cfg }, { waitForResponse });
         if (a.verdict === "ok") out = { answer: a.answer, conversationId: a.conversationId };
       }
+      if (!wantB) pathPref.recordA(out != null);
       if (!out && msg.path === "A") throw new Error("PATH_A_FAILED");
       if (!out) {
         out = await driver.askWithFileDrop({ bytes, mime: msg.mime, filename: msg.filename, prompt: msg.prompt, cfg }, { waitForResponse });
