@@ -72,6 +72,16 @@ export function isUploadTokenValid(text) {
   return typeof text === "string" && text.startsWith("/contrib_service/");
 }
 
+// Decide whether Path A produced a usable answer. Any failure signal → tell the driver to run
+// Path B (drag-drop) instead. Keeps the fallback trigger in one testable place.
+export function classifyPathAResult({ tokensOk, uploadOk, generateStatus, answer }) {
+  if (!tokensOk) return "fallback";
+  if (!uploadOk) return "fallback";
+  if (!(generateStatus >= 200 && generateStatus < 300)) return "fallback";
+  if (!answer || !String(answer).trim()) return "fallback";
+  return "ok";
+}
+
 export const geminiDriver = {
   id: "gemini",
   hostMatch: (h) => h === "gemini.google.com",

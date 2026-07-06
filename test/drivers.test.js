@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { chatgptDriver } from "../src/drivers/chatgpt.js";
-import { geminiDriver, scrapeTokens, buildGeminiDeleteRequest, buildGeminiGenerateRequest, checkMime, uploadStartHeaders, isUploadTokenValid } from "../src/drivers/gemini.js";
+import { geminiDriver, scrapeTokens, buildGeminiDeleteRequest, buildGeminiGenerateRequest, checkMime, uploadStartHeaders, isUploadTokenValid, classifyPathAResult } from "../src/drivers/gemini.js";
 import { DRIVERS, pickDriver, driverById, DRIVER_META } from "../src/drivers/index.js";
 
 test("chatgpt driver identity + host match", () => {
@@ -98,4 +98,13 @@ test("isUploadTokenValid accepts contrib_service token only", () => {
   assert.equal(isUploadTokenValid("/contrib_service/ttl_1d/abc_XYZ"), true);
   assert.equal(isUploadTokenValid("<html>error</html>"), false);
   assert.equal(isUploadTokenValid(""), false);
+});
+
+test("classifyPathAResult falls back on each failure signal", () => {
+  const ok = { tokensOk: true, uploadOk: true, generateStatus: 200, answer: "hi" };
+  assert.equal(classifyPathAResult(ok), "ok");
+  assert.equal(classifyPathAResult({ ...ok, tokensOk: false }), "fallback");
+  assert.equal(classifyPathAResult({ ...ok, uploadOk: false }), "fallback");
+  assert.equal(classifyPathAResult({ ...ok, generateStatus: 400 }), "fallback");
+  assert.equal(classifyPathAResult({ ...ok, answer: "" }), "fallback");
 });
