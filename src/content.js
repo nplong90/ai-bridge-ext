@@ -68,8 +68,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         const a = await driver.askWithFile({ bytes, mime: msg.mime, filename: msg.filename, prompt: msg.prompt, cfg }, { waitForResponse });
         if (a.verdict === "ok") out = { answer: a.answer, conversationId: a.conversationId };
       }
-      if (!out) { // Path B fallback (Task 10) — filled in there
-        throw new Error("PATH_A_FAILED");
+      if (!out && msg.path === "A") throw new Error("PATH_A_FAILED");
+      if (!out) {
+        out = await driver.askWithFileDrop({ bytes, mime: msg.mime, filename: msg.filename, prompt: msg.prompt, cfg }, { waitForResponse });
       }
       sendResponse({ ok: true, text: out.answer || "", conversationId: out.conversationId, provider: driver.id });
       driver.deleteConversation(out.conversationId);

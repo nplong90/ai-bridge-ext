@@ -187,4 +187,31 @@ export const geminiDriver = {
     const verdict = classifyPathAResult({ tokensOk, uploadOk, generateStatus, answer });
     return { verdict, answer, conversationId };
   },
+
+  // Path B: build a real File and hand it to Gemini's own uploader by setting it on the hidden
+  // file input and firing change (the page then runs the exact upload we saw in the HAR and
+  // builds its own f.req). Robust to schema changes; needs a foreground tab.
+  async attachViaDrop(bytes, mime, filename, cfg) {
+    const input = document.querySelector(cfg.selectors.dropZone);
+    if (!input) return false;
+    const file = new File([bytes], filename, { type: mime });
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    input.files = dt.files;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
+  },
+
+  async askWithFileDrop({ bytes, mime, filename, prompt, cfg }, ctx) {
+    const attached = await this.attachViaDrop(bytes, mime, filename, cfg);
+    if (!attached) throw new Error("DROP_ATTACH_FAILED");
+    // Wait for the page's own upload to finish before sending (the composer's send stays disabled
+    // until the attachment resolves). Reuse startSend which waits for the send button.
+    await sleep(1500);
+    await this.startSend(prompt);
+    const raw = await ctx.waitForResponse((url) => /\/StreamGenerate/.test(url), 120000);
+    if (!raw) throw new Error("NO_RESPONSE_CAPTURED");
+    const parsed = parseGeminiStream(raw);
+    return { answer: parsed.answer || "", conversationId: parsed.conversationId };
+  },
 };
