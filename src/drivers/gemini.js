@@ -39,7 +39,7 @@ export function buildGeminiGenerateRequest({ prompt, fileToken, mime, filename, 
     sessionBlob,
   ];
   const freq = JSON.stringify([null, JSON.stringify(inner)]);
-  const body = `f.req=${encodeURIComponent(freq)}&at=${encodeURIComponent(at)}`;
+  const body = new URLSearchParams({ "f.req": freq, at }).toString();
   const qs = new URLSearchParams({
     bl, "f.sid": fsid, hl: cfg.generate.hl, _reqid: String(reqid), rt: "c",
   });

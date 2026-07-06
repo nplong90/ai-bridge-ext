@@ -71,10 +71,11 @@ test("buildGeminiGenerateRequest embeds prompt, token, mime, filename in f.req",
   assert.ok(url.includes("f.sid=SID"));
   assert.ok(url.includes("_reqid=12345"));
   assert.ok(url.includes("rt=c"));
-  const decoded = decodeURIComponent(body);
+  const params = new URLSearchParams(body);
+  const decoded = params.get("f.req");
   assert.ok(decoded.includes("đọc nội dung"));
   assert.ok(decoded.includes("/contrib_service/ttl_1d/TOK"));
   assert.ok(decoded.includes("audio/ogg"));
   assert.ok(decoded.includes("chunk1.ogg"));
-  assert.ok(body.includes("at=AT_TOK"));
+  assert.equal(params.get("at"), "AT_TOK");
 });
