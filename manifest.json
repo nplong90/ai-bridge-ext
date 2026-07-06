@@ -5,7 +5,7 @@
   "version": "0.2.0",
   "description": "Bridge to ChatGPT/Gemini via the logged-in web session; pluggable providers.",
   "permissions": ["scripting", "tabs", "storage", "sidePanel", "nativeMessaging", "alarms"],
-  "host_permissions": ["https://chatgpt.com/*", "https://gemini.google.com/*", "https://*.googleusercontent.com/*", "https://*.usercontent.google.com/*", "https://lh3.google.com/*", "https://*.oaiusercontent.com/*"],
+  "host_permissions": ["https://chatgpt.com/*", "https://gemini.google.com/*", "https://*.googleusercontent.com/*", "https://*.usercontent.google.com/*", "https://lh3.google.com/*", "https://*.oaiusercontent.com/*", "https://push.clients6.google.com/*"],
   "background": { "service_worker": "src/background.js", "type": "module" },
   "action": { "default_title": "AI Bridge" },
   "side_panel": { "default_path": "src/sidepanel.html" },
