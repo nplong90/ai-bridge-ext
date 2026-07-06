@@ -133,4 +133,48 @@ export const geminiDriver = {
       console.log("[cgw] gemini delete", id, "→", res && res.result);
     } catch (e) { console.warn("[cgw] gemini delete dispatch failed:", e.message || e); }
   },
+
+  // Path A: replicate Google's 2-step resumable upload with the logged-in session cookies
+  // (fetch runs in the gemini.google.com content-script context → credentials flow).
+  async uploadFileA(bytes, mime, filename, cfg) {
+    const { headers, body } = uploadStartHeaders({ byteLength: bytes.byteLength, filename, tenantId: cfg.upload.tenantId });
+    const start = await fetch(cfg.upload.url, { method: "POST", headers, body, credentials: "include" });
+    const uploadUrl = start.headers.get("x-goog-upload-url");
+    if (!start.ok || !uploadUrl) return null;
+    const fin = await fetch(uploadUrl, {
+      method: "POST",
+      headers: { "X-Goog-Upload-Command": "upload, finalize", "X-Goog-Upload-Offset": "0" },
+      body: bytes, credentials: "include",
+    });
+    const token = (await fin.text()).trim();
+    return isUploadTokenValid(token) ? token : null;
+  },
+
+  // Try Path A (headless forge). Returns null-answer signal on any failure so content.js runs B.
+  async askWithFile({ bytes, mime, filename, prompt, cfg }, ctx) {
+    const html = document.documentElement.innerHTML;
+    const { at, bl, fsid } = scrapeTokens(html);
+    const tokensOk = !!(at && bl && fsid);
+    let uploadOk = false, generateStatus = 0, answer = "", conversationId = null;
+    if (tokensOk) {
+      const fileToken = await this.uploadFileA(bytes, mime, filename, cfg);
+      uploadOk = !!fileToken;
+      if (uploadOk) {
+        const reqid = 100000 + Math.floor(Math.random() * 800000);
+        const { url, body } = buildGeminiGenerateRequest({ prompt, fileToken, mime, filename, at, bl, fsid, reqid, cfg });
+        const r = await fetch(url, {
+          method: "POST",
+          headers: { "content-type": "application/x-www-form-urlencoded;charset=UTF-8" },
+          body, credentials: "include",
+        });
+        generateStatus = r.status;
+        const raw = await r.text();
+        const parsed = parseGeminiStream(raw);
+        answer = parsed.answer || "";
+        conversationId = parsed.conversationId;
+      }
+    }
+    const verdict = classifyPathAResult({ tokensOk, uploadOk, generateStatus, answer });
+    return { verdict, answer, conversationId };
+  },
 };

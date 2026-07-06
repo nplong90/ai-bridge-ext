@@ -24,7 +24,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["src/shared.js", "src/parsers.js", "src/drivers/index.js", "src/drivers/chatgpt.js", "src/drivers/gemini.js"],
+      "resources": ["src/shared.js", "src/parsers.js", "src/drivers/index.js", "src/drivers/chatgpt.js", "src/drivers/gemini.js", "src/config/gemini-upload.json"],
       "matches": ["https://chatgpt.com/*", "https://gemini.google.com/*"]
     }
   ]

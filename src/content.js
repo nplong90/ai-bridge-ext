@@ -51,4 +51,33 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   return true; // async response
 });
 
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (!msg || msg.channel !== "cgw" || msg.type !== "ASK-FILE") return;
+  (async () => {
+    try {
+      const { pickDriver } = await registry;
+      const driver = pickDriver(location.host);
+      if (!driver || driver.id !== "gemini") throw new Error("NO_GEMINI_DRIVER");
+      if (!(await driver.isLoggedIn())) throw new Error("NOT_AUTHENTICATED");
+      const cfg = await (await fetch(chrome.runtime.getURL("src/config/gemini-upload.json"))).json();
+      const bytes = new Uint8Array(await (await fetch(msg.blobUrl)).arrayBuffer());
+      netBuffer.length = 0;
+      const wantB = msg.path === "B";
+      let out = null;
+      if (!wantB) {
+        const a = await driver.askWithFile({ bytes, mime: msg.mime, filename: msg.filename, prompt: msg.prompt, cfg }, { waitForResponse });
+        if (a.verdict === "ok") out = { answer: a.answer, conversationId: a.conversationId };
+      }
+      if (!out) { // Path B fallback (Task 10) — filled in there
+        throw new Error("PATH_A_FAILED");
+      }
+      sendResponse({ ok: true, text: out.answer || "", conversationId: out.conversationId, provider: driver.id });
+      driver.deleteConversation(out.conversationId);
+    } catch (e) {
+      sendResponse({ ok: false, error: String(e.message || e), provider: null });
+    }
+  })();
+  return true;
+})
+
 chrome.runtime.sendMessage({ channel: "cgw", type: "READY" }).catch(() => {});
