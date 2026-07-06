@@ -68,7 +68,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       const cfg = await (await fetch(chrome.runtime.getURL("src/config/gemini-upload.json"))).json();
       let bytes;
       if (msg.blobUrl) {
-        bytes = new Uint8Array(await (await fetch(msg.blobUrl)).arrayBuffer());
+        const r = await fetch(msg.blobUrl);
+        if (!r.ok) throw new Error("BLOB_FETCH_FAILED:" + r.status);
+        bytes = new Uint8Array(await r.arrayBuffer());
       } else if (msg.bytesB64) {
         const bin = atob(msg.bytesB64);
         bytes = new Uint8Array(bin.length);

@@ -126,8 +126,11 @@ const server = http.createServer((req, res) => {
   // GET /blob/<id> — the extension fetches the raw bytes here (localhost is a secure context, so
   // the gemini.google.com content script can fetch it without mixed-content errors). One-shot: the
   // entry is dropped after it's served so bytes don't linger in memory.
+  // No x-aibridge-key gate here (unlike /ask, /tts, /ask-file): the content script has no access to
+  // the operator's env key and fetches this URL bare, so gating it would 401 every file upload once
+  // AIBRIDGE_KEY is set. The protection for this route is the id itself — an unguessable
+  // crypto.randomUUID() capability URL, served once then deleted, with a short TTL if never fetched.
   if (req.method === "GET" && req.url.startsWith("/blob/")) {
-    if (KEY && req.headers["x-aibridge-key"] !== KEY) return fail(res, 401, "UNAUTHORIZED");
     const id = req.url.slice("/blob/".length);
     const entry = blobs.get(id);
     if (!entry) return fail(res, 404, "NO_BLOB");

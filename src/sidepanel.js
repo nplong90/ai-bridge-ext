@@ -181,6 +181,7 @@ function send() {
       { type: "ASK-FILE-FROM-PANEL", prompt, mime: attached.mime, filename: attached.filename, bytesB64: attached.bytesB64, path: "auto" },
       () => void chrome.runtime.lastError,
     );
+    attached = null; filenameEl.textContent = ""; fileEl.value = "";
   } else {
     chrome.runtime.sendMessage({ type: "ASK-FROM-PANEL", prompt, provider: providerEl.value }, () => void chrome.runtime.lastError);
   }
