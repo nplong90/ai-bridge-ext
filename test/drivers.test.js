@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { chatgptDriver } from "../src/drivers/chatgpt.js";
-import { geminiDriver, scrapeTokens, buildGeminiDeleteRequest, buildGeminiGenerateRequest, checkMime, uploadStartHeaders, isUploadTokenValid, classifyPathAResult } from "../src/drivers/gemini.js";
+import { geminiDriver, scrapeTokens, buildGeminiDeleteRequest, buildGeminiGenerateRequest, checkMime, uploadStartHeaders, isUploadTokenValid, classifyPathAResult, createPathPreference } from "../src/drivers/gemini.js";
 import { DRIVERS, pickDriver, driverById, DRIVER_META } from "../src/drivers/index.js";
 
 test("chatgpt driver identity + host match", () => {
@@ -107,4 +107,15 @@ test("classifyPathAResult falls back on each failure signal", () => {
   assert.equal(classifyPathAResult({ ...ok, uploadOk: false }), "fallback");
   assert.equal(classifyPathAResult({ ...ok, generateStatus: 400 }), "fallback");
   assert.equal(classifyPathAResult({ ...ok, answer: "" }), "fallback");
+});
+
+test("createPathPreference trips to B after N consecutive A failures, resets on success", () => {
+  const p = createPathPreference({ threshold: 3 });
+  assert.equal(p.prefer(), "A");
+  p.recordA(false); p.recordA(false);
+  assert.equal(p.prefer(), "A"); // still under threshold
+  p.recordA(false);
+  assert.equal(p.prefer(), "B"); // tripped
+  p.recordA(true);
+  assert.equal(p.prefer(), "A"); // reset
 });

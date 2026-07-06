@@ -82,6 +82,16 @@ export function classifyPathAResult({ tokensOk, uploadOk, generateStatus, answer
   return "ok";
 }
 
+// Circuit breaker: once Path A fails `threshold` times in a row (schema drift), prefer Path B so
+// we stop wasting a doomed A attempt on every request. One success flips back to A.
+export function createPathPreference({ threshold = 3 } = {}) {
+  let consecutiveFails = 0;
+  return {
+    prefer() { return consecutiveFails >= threshold ? "B" : "A"; },
+    recordA(ok) { consecutiveFails = ok ? 0 : consecutiveFails + 1; },
+  };
+}
+
 export const geminiDriver = {
   id: "gemini",
   hostMatch: (h) => h === "gemini.google.com",
