@@ -83,7 +83,12 @@ export const chatgptDriver = {
     const messageId = last && last.getAttribute("data-message-id");
     const conversationId = parseChatgptConvId(location.href);
     if (!messageId || !conversationId) throw new Error("NO_CHATGPT_MESSAGE");
-    const r = await fetch(buildSynthesizeUrl({ messageId, conversationId, voice: voice || "breeze" }), { credentials: "include" });
+    // synthesize requires the bearer access token (cookies alone → 401 "Access token is missing").
+    const token = await getAccessToken();
+    const r = await fetch(buildSynthesizeUrl({ messageId, conversationId, voice: voice || "breeze" }), {
+      headers: { authorization: "Bearer " + token },
+      credentials: "include",
+    });
     if (!r.ok) throw new Error("SYNTHESIZE_" + r.status);
     const bytes = new Uint8Array(await r.arrayBuffer());
     let bin = "";
