@@ -1,16 +1,18 @@
 {
-  "capturedOn": "2026-07-06",
+  "capturedOn": "2026-07-07",
   "upload": {
     "url": "https://push.clients6.google.com/upload/",
     "tenantId": "bard-storage",
-    "chunkGranularity": 262144
+    "chunkGranularity": 262144,
+    "pushId": "feeds/mcudyrk2a4khkz",
+    "clientPctx": "CgcSBWjK7pYx"
   },
   "generate": {
     "url": "https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate",
     "hl": "en"
   },
   "scrapeKeys": { "at": "SNlM0e", "bl": "cfb2h", "fsid": "FdrFJe" },
-  "freq": { "fileMagic": 4 },
+  "freq": { "fileMagic": 4, "mimeMagic": { "audio": 4, "video": 2 } },
   "selectors": {
     "dropZone": "input[type=file]",
     "composer": ".ql-editor",

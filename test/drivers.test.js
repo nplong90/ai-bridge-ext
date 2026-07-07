@@ -1,7 +1,23 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { chatgptDriver } from "../src/drivers/chatgpt.js";
-import { geminiDriver, scrapeTokens, buildGeminiDeleteRequest, buildGeminiGenerateRequest, checkMime, uploadStartHeaders, isUploadTokenValid, classifyPathAResult, createPathPreference } from "../src/drivers/gemini.js";
+import { geminiDriver, scrapeTokens, buildGeminiDeleteRequest, buildGeminiGenerateRequest, checkMime, uploadStartHeaders, isUploadTokenValid, classifyPathAResult, createPathPreference, magicForMime } from "../src/drivers/gemini.js";
+
+test("magicForMime maps media type to f.req magic (audio 4, video 2), falls back to fileMagic", () => {
+  const cfg = { freq: { fileMagic: 4, mimeMagic: { audio: 4, video: 2 } } };
+  assert.equal(magicForMime("audio/ogg", cfg), 4);
+  assert.equal(magicForMime("video/mp4", cfg), 2);
+  assert.equal(magicForMime("application/pdf", cfg), 4);
+});
+
+test("uploadStartHeaders includes Push-ID + X-Client-Pctx only when provided", () => {
+  const { headers } = uploadStartHeaders({ byteLength: 10, filename: "a.mp4", tenantId: "bard-storage", pushId: "feeds/x", clientPctx: "PCTX" });
+  assert.equal(headers["Push-ID"], "feeds/x");
+  assert.equal(headers["X-Client-Pctx"], "PCTX");
+  const { headers: h2 } = uploadStartHeaders({ byteLength: 10, filename: "a.mp4", tenantId: "bard-storage" });
+  assert.equal("Push-ID" in h2, false);
+  assert.equal("X-Client-Pctx" in h2, false);
+});
 import { DRIVERS, pickDriver, driverById, DRIVER_META } from "../src/drivers/index.js";
 
 test("chatgpt driver identity + host match", () => {

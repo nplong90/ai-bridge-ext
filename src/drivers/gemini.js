@@ -27,13 +27,21 @@ export function buildGeminiDeleteRequest({ convId, at, bl, fsid, reqid }) {
   return { url: ORIGIN + "/_/BardChatUi/data/batchexecute?" + qs.toString(), body };
 }
 
+// The file-attachment "magic" number in f.req depends on the media type (observed: audio→4,
+// video→2). Map by the mime major type, falling back to freq.fileMagic for unknown types.
+export function magicForMime(mime, cfg) {
+  const major = String(mime || "").split("/")[0];
+  const map = (cfg.freq && cfg.freq.mimeMagic) || {};
+  return map[major] != null ? map[major] : cfg.freq.fileMagic;
+}
+
 // Build the StreamGenerate request that Path A POSTs directly (no composer). The inner f.req
 // structure was reverse-engineered from a real upload trace (see specs). `sessionBlob` is the
 // per-conversation "!Wlml…" token the page normally injects; for a fresh chat we send "" and
 // rely on Gemini accepting it — if it rejects, the driver falls back to Path B (drag-drop).
 export function buildGeminiGenerateRequest({ prompt, fileToken, mime, filename, at, bl, fsid, reqid, sessionBlob = "", cfg }) {
   const inner = [
-    [ prompt, 0, null, [[[fileToken, cfg.freq.fileMagic, null, mime], filename]], null, null, 0 ],
+    [ prompt, 0, null, [[[fileToken, magicForMime(mime, cfg), null, mime], filename]], null, null, 0 ],
     [cfg.generate.hl],
     ["", "", "", null, null, null, null, null, null, ""],
     sessionBlob,
@@ -53,17 +61,20 @@ export function checkMime(mime, supportedList) {
 }
 
 // Step-1 (start) of Google's resumable upload. Body carries only the filename metadata.
-export function uploadStartHeaders({ byteLength, filename, tenantId }) {
-  return {
-    headers: {
-      "X-Goog-Upload-Protocol": "resumable",
-      "X-Goog-Upload-Command": "start",
-      "X-Goog-Upload-Header-Content-Length": String(byteLength),
-      "X-Tenant-Id": tenantId,
-      "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-    },
-    body: "File name: " + filename,
+// Push-ID and X-Client-Pctx are constant per-account values the page's uploader always sends;
+// omitting them makes push.clients6 reject the start with HTTP 400 (observed). Sourced from
+// config so they can be re-captured from a HAR if Google ever rotates them.
+export function uploadStartHeaders({ byteLength, filename, tenantId, pushId, clientPctx }) {
+  const headers = {
+    "X-Goog-Upload-Protocol": "resumable",
+    "X-Goog-Upload-Command": "start",
+    "X-Goog-Upload-Header-Content-Length": String(byteLength),
+    "X-Tenant-Id": tenantId,
+    "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
   };
+  if (pushId) headers["Push-ID"] = pushId;
+  if (clientPctx) headers["X-Client-Pctx"] = clientPctx;
+  return { headers, body: "File name: " + filename };
 }
 
 // The finalize step returns a plain-text token like "/contrib_service/ttl_1d/…". Anything else
@@ -147,7 +158,7 @@ export const geminiDriver = {
   // Path A: replicate Google's 2-step resumable upload with the logged-in session cookies
   // (fetch runs in the gemini.google.com content-script context → credentials flow).
   async uploadFileA(bytes, mime, filename, cfg) {
-    const { headers, body } = uploadStartHeaders({ byteLength: bytes.byteLength, filename, tenantId: cfg.upload.tenantId });
+    const { headers, body } = uploadStartHeaders({ byteLength: bytes.byteLength, filename, tenantId: cfg.upload.tenantId, pushId: cfg.upload.pushId, clientPctx: cfg.upload.clientPctx });
     const start = await fetch(cfg.upload.url, { method: "POST", headers, body, credentials: "include" });
     const uploadUrl = start.headers.get("x-goog-upload-url");
     if (!start.ok || !uploadUrl) {
@@ -156,11 +167,10 @@ export const geminiDriver = {
       console.log("[cgw-diag] PathA upload START failed: " + JSON.stringify({ status: start.status, uploadUrl, errBody: String(errBody).slice(0, 500), respHeaders: gotHeaders }));
       return null;
     }
-    const fin = await fetch(uploadUrl, {
-      method: "POST",
-      headers: { "X-Goog-Upload-Command": "upload, finalize", "X-Goog-Upload-Offset": "0" },
-      body: bytes, credentials: "include",
-    });
+    const finHeaders = { "X-Goog-Upload-Command": "upload, finalize", "X-Goog-Upload-Offset": "0" };
+    if (cfg.upload.pushId) finHeaders["Push-ID"] = cfg.upload.pushId;
+    if (cfg.upload.clientPctx) finHeaders["X-Client-Pctx"] = cfg.upload.clientPctx;
+    const fin = await fetch(uploadUrl, { method: "POST", headers: finHeaders, body: bytes, credentials: "include" });
     const token = (await fin.text()).trim();
     return isUploadTokenValid(token) ? token : null;
   },
