@@ -427,7 +427,13 @@ function connectNative() {
   try {
     nativePort = chrome.runtime.connectNative(NATIVE_HOST);
     nativePort.onMessage.addListener(onNativeMessage);
-    nativePort.onDisconnect.addListener(() => { nativePort = null; }); // host not installed / exited
+    nativePort.onDisconnect.addListener(() => {
+      // Read lastError so Chrome doesn't surface "Unchecked runtime.lastError: Specified native
+      // messaging host not found." The host is optional (only needed for the local HTTP API);
+      // panel-only users never install it, so a failed connect here is expected, not an error.
+      void chrome.runtime.lastError;
+      nativePort = null;
+    });
   } catch { nativePort = null; }
 }
 
