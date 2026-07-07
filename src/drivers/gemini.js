@@ -153,7 +153,7 @@ export const geminiDriver = {
     if (!start.ok || !uploadUrl) {
       const errBody = await start.text().catch(() => "(unreadable)");
       const gotHeaders = {}; start.headers.forEach((v, k) => { gotHeaders[k] = v; });
-      console.log("[cgw-diag] PathA upload START failed:", { status: start.status, uploadUrl, errBody: String(errBody).slice(0, 500), respHeaders: gotHeaders });
+      console.log("[cgw-diag] PathA upload START failed: " + JSON.stringify({ status: start.status, uploadUrl, errBody: String(errBody).slice(0, 500), respHeaders: gotHeaders }));
       return null;
     }
     const fin = await fetch(uploadUrl, {
@@ -170,12 +170,12 @@ export const geminiDriver = {
     const html = document.documentElement.innerHTML;
     const { at, bl, fsid } = scrapeTokens(html);
     const tokensOk = !!(at && bl && fsid);
-    console.log("[cgw-diag] PathA tokens:", { at: !!at, bl: !!bl, fsid: !!fsid, tokensOk });
+    console.log("[cgw-diag] PathA tokens: " + JSON.stringify({ at: !!at, bl: !!bl, fsid: !!fsid, tokensOk }));
     let uploadOk = false, generateStatus = 0, answer = "", conversationId = null;
     if (tokensOk) {
       const fileToken = await this.uploadFileA(bytes, mime, filename, cfg);
       uploadOk = !!fileToken;
-      console.log("[cgw-diag] PathA upload:", { uploadOk, tokenPreview: fileToken ? String(fileToken).slice(0, 40) : null });
+      console.log("[cgw-diag] PathA upload: " + JSON.stringify({ uploadOk, tokenPreview: fileToken ? String(fileToken).slice(0, 40) : null }));
       if (uploadOk) {
         const reqid = 100000 + Math.floor(Math.random() * 800000);
         const { url, body } = buildGeminiGenerateRequest({ prompt, fileToken, mime, filename, at, bl, fsid, reqid, cfg });
@@ -189,7 +189,7 @@ export const geminiDriver = {
         const parsed = parseGeminiStream(raw);
         answer = parsed.answer || "";
         conversationId = parsed.conversationId;
-        console.log("[cgw-diag] PathA generate:", { generateStatus, answerLen: answer.length, rawPreview: String(raw).slice(0, 400) });
+        console.log("[cgw-diag] PathA generate: " + JSON.stringify({ generateStatus, answerLen: answer.length, rawPreview: String(raw).slice(0, 400) }));
       }
     }
     const verdict = classifyPathAResult({ tokensOk, uploadOk, generateStatus, answer });
