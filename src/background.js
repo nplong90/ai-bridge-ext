@@ -276,9 +276,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg && msg.type === "CLEAR-STATE") { chrome.storage.local.remove(STATE_KEY); return; }
 
-  // Gemini TTS: synthesize speech for `text` and return audio bytes as a data: URL.
+  // TTS: Gemini reads arbitrary `text` (background MAIN-world RPC); ChatGPT reads back its own
+  // last assistant message via /backend-api/synthesize (content-script cookie'd fetch).
   if (msg && msg.type === "TTS-FROM-PANEL") {
-    ttsGemini(msg.text, msg.lang).then(
+    const p = msg.provider || DEFAULT_PROVIDER;
+    const job = p === "chatgpt" ? ttsChatgpt(msg.voice) : ttsGemini(msg.text, msg.lang);
+    job.then(
       (audio) => sendResponse(audio ? { ok: true, ...audio } : { ok: false, error: "NO_AUDIO" }),
       (e) => sendResponse({ ok: false, error: String(e.message || e) }),
     );
@@ -326,6 +329,18 @@ async function ttsGemini(text, lang) {
   }
   if (!r || !r.ok || !r.raw) return null;
   return parseGeminiTts(r.raw); // { dataUrl, mimeType } | null
+}
+
+// ChatGPT read-aloud: ask the chatgpt.com content script to synthesize its last assistant
+// message (needs a cookie'd fetch + the message_id from the tab's DOM). Returns { dataUrl,
+// mimeType } | null. Unlike Gemini TTS it can't voice arbitrary text — only the last answer.
+async function ttsChatgpt(voice) {
+  const tabId = await ensureTab(driverById("chatgpt"));
+  const resp = await withTimeout(
+    chrome.tabs.sendMessage(tabId, { channel: "cgw", type: "TTS-CHATGPT", voice }),
+    REQUEST_TIMEOUT_MS, "REQUEST_TIMEOUT",
+  );
+  return resp && resp.ok ? { dataUrl: resp.dataUrl, mimeType: resp.mimeType } : null;
 }
 
 // Runs in the Gemini tab's MAIN world (self-contained — no imports allowed).

@@ -101,4 +101,22 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   return true;
 })
 
+// ChatGPT "Read aloud": synthesize the last assistant message into audio (cookie'd fetch,
+// runs in the chatgpt.com content script). Gemini TTS goes a different route (background MAIN world).
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (!msg || msg.channel !== "cgw" || msg.type !== "TTS-CHATGPT") return;
+  (async () => {
+    try {
+      const { pickDriver } = await registry;
+      const driver = pickDriver(location.host);
+      if (!driver || driver.id !== "chatgpt") throw new Error("NO_CHATGPT_DRIVER");
+      const audio = await driver.synthesizeLast(msg.voice);
+      sendResponse({ ok: true, ...audio });
+    } catch (e) {
+      sendResponse({ ok: false, error: String(e.message || e) });
+    }
+  })();
+  return true;
+});
+
 chrome.runtime.sendMessage({ channel: "cgw", type: "READY" }).catch(() => {});

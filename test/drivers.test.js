@@ -1,6 +1,22 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { chatgptDriver } from "../src/drivers/chatgpt.js";
+import { chatgptDriver, buildSynthesizeUrl } from "../src/drivers/chatgpt.js";
+
+test("buildSynthesizeUrl targets /backend-api/synthesize with message/conversation/voice/format", () => {
+  const url = buildSynthesizeUrl({ messageId: "MID", conversationId: "CID" });
+  assert.ok(url.startsWith("https://chatgpt.com/backend-api/synthesize?"));
+  const q = new URL(url).searchParams;
+  assert.equal(q.get("message_id"), "MID");
+  assert.equal(q.get("conversation_id"), "CID");
+  assert.equal(q.get("voice"), "breeze"); // default
+  assert.equal(q.get("format"), "aac");
+  assert.equal(new URL(buildSynthesizeUrl({ messageId: "M", conversationId: "C", voice: "cove" })).searchParams.get("voice"), "cove");
+});
+
+test("chatgpt driver advertises audio capability + synthesizeLast", () => {
+  assert.equal(chatgptDriver.capabilities.audio, true);
+  assert.equal(typeof chatgptDriver.synthesizeLast, "function");
+});
 import { geminiDriver, scrapeTokens, buildGeminiDeleteRequest, buildGeminiGenerateRequest, checkMime, uploadStartHeaders, isUploadTokenValid, classifyPathAResult, createPathPreference, magicForMime } from "../src/drivers/gemini.js";
 
 test("magicForMime maps media type to f.req magic (audio 4, video 2), falls back to fileMagic", () => {

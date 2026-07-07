@@ -13,6 +13,14 @@ export function parseChatgptConvId(url) {
   return m ? m[1] : null;
 }
 
+// ChatGPT "Read aloud" synthesizes an EXISTING assistant message server-side (by message_id +
+// conversation_id) and streams back audio — unlike Gemini's read-aloud which takes arbitrary
+// text. Pure URL builder so it can be unit-tested. Default voice "breeze", format "aac".
+export function buildSynthesizeUrl({ origin = ORIGIN, messageId, conversationId, voice = "breeze", format = "aac" }) {
+  const qs = new URLSearchParams({ message_id: messageId, conversation_id: conversationId, voice, format });
+  return origin + "/backend-api/synthesize?" + qs.toString();
+}
+
 async function getAccessToken() {
   const s = await fetch("/api/auth/session", { credentials: "include" });
   if (!s.ok) throw new Error("SESSION_" + s.status);
@@ -25,7 +33,7 @@ export const chatgptDriver = {
   id: "chatgpt",
   hostMatch: (h) => h === "chatgpt.com",
   newChatUrl: ORIGIN + "/",
-  capabilities: { images: false },
+  capabilities: { images: false, audio: true },
   // ChatGPT's f/conversation request bypasses page-world fetch (service worker), so
   // network interception isn't reliable — but its React DOM renders even in a
   // background tab, so DOM read works. Gemini is the opposite (see gemini.js).
@@ -65,6 +73,23 @@ export const chatgptDriver = {
       ? [...new Set([...last.querySelectorAll("img")].map((i) => i.src).filter((s) => /^https?:/.test(s)))].map((u) => ({ url: u }))
       : [];
     return { answer, conversationId: parseChatgptConvId(location.href), images };
+  },
+
+  // Read aloud the last assistant message via /backend-api/synthesize. Runs in the chatgpt.com
+  // content script (cookie'd fetch). Returns { dataUrl, mimeType } or throws.
+  async synthesizeLast(voice) {
+    const nodes = document.querySelectorAll(SEL.assistant);
+    const last = nodes[nodes.length - 1];
+    const messageId = last && last.getAttribute("data-message-id");
+    const conversationId = parseChatgptConvId(location.href);
+    if (!messageId || !conversationId) throw new Error("NO_CHATGPT_MESSAGE");
+    const r = await fetch(buildSynthesizeUrl({ messageId, conversationId, voice: voice || "breeze" }), { credentials: "include" });
+    if (!r.ok) throw new Error("SYNTHESIZE_" + r.status);
+    const bytes = new Uint8Array(await r.arrayBuffer());
+    let bin = "";
+    const CHUNK = 0x8000;
+    for (let i = 0; i < bytes.length; i += CHUNK) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+    return { dataUrl: "data:audio/aac;base64," + btoa(bin), mimeType: "audio/aac" };
   },
 
   async deleteConversation(id) {
