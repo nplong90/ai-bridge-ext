@@ -79,11 +79,18 @@ export const chatgptDriver = {
     }
     const answer = await readStable(readText);
     // Generated (DALL·E) images render as <img> in the assistant turn; take http(s) srcs.
-    const nodes = document.querySelectorAll(SEL.assistant);
-    const last = nodes[nodes.length - 1];
-    const images = last
-      ? [...new Set([...last.querySelectorAll("img")].map((i) => i.src).filter((s) => /^https?:/.test(s)))].map((u) => ({ url: u }))
-      : [];
+    const lastImgs = () => {
+      const n = document.querySelectorAll(SEL.assistant);
+      const l = n[n.length - 1];
+      return l ? [...l.querySelectorAll("img")].map((i) => i.src).filter((s) => /^https?:/.test(s)) : [];
+    };
+    // Text settled but generation is still running (stop button up) and no image yet → an image is
+    // being created. Wait, bounded, for its <img> to render so we don't drop it; exit early the
+    // moment it appears or generation finishes. Text-only replies (stop already gone) skip this.
+    if (document.querySelector(SEL.stop) && !lastImgs().length) {
+      await waitFor(() => !document.querySelector(SEL.stop) || lastImgs().length > 0, { tries: 600, interval: 100 });
+    }
+    const images = [...new Set(lastImgs())].map((u) => ({ url: u }));
     return { answer, conversationId: parseChatgptConvId(location.href), images };
   },
 
