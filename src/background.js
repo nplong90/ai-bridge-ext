@@ -223,6 +223,9 @@ function ask(prompt, provider) {
       images = out;
       chrome.storage.local.set({ cgw_img_debug: { images: images.map((it) => (it.dataUrl ? "dataUrl:" + Math.round(it.dataUrl.length / 1024) + "KB" : "url:" + String(it.url).slice(0, 50))) } });
     }
+    // ChatGPT temp chats aren't deleted immediately (read-aloud needs the conversation alive);
+    // schedule a delayed cleanup so history doesn't accumulate even if no follow-up ask happens.
+    if (driver.id === "chatgpt" && resp.conversationId) scheduleChatgptDelete(resp.conversationId);
     return { ...resp, images };
   });
 }
@@ -392,6 +395,33 @@ function geminiDeleteInPage(conversationId) {
 const NATIVE_HOST = "com.aibridge.host";
 let nativePort = null;
 
+// ChatGPT temp-chat cleanup: hide the conversation after a delay so read-aloud (synthesize, which
+// 404s once a chat is hidden) still works, but history is cleaned up even with no follow-up ask.
+// Uses chrome.alarms (a setTimeout wouldn't survive the MV3 service worker being suspended).
+const CHATGPT_DELETE_DELAY_MIN = 5;
+const CGPT_DEL_PREFIX = "cgw-cgpt-del:";
+
+function scheduleChatgptDelete(convId) {
+  if (!convId) return;
+  chrome.alarms?.create(CGPT_DEL_PREFIX + convId, { delayInMinutes: CHATGPT_DELETE_DELAY_MIN });
+}
+
+// Hide a ChatGPT conversation straight from the service worker — no tab needed. host_permissions
+// for chatgpt.com lets a credentialed SW fetch carry the session cookie to mint the bearer token.
+async function swDeleteChatgpt(convId) {
+  try {
+    const s = await fetch("https://chatgpt.com/api/auth/session", { credentials: "include" });
+    const d = s.ok ? await s.json().catch(() => ({})) : {};
+    if (!d.accessToken) return;
+    await fetch("https://chatgpt.com/backend-api/conversation/" + convId, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", authorization: "Bearer " + d.accessToken },
+      body: JSON.stringify({ is_visible: false }),
+      credentials: "include",
+    });
+  } catch (e) { console.warn("[cgw] delayed chatgpt delete failed:", e.message || e); }
+}
+
 function handleApiOp(msg) {
   const provider = msg.provider || DEFAULT_PROVIDER;
   if (msg.op === "tts") {
@@ -440,4 +470,7 @@ function connectNative() {
 connectNative();
 chrome.runtime.onStartup?.addListener(connectNative);
 chrome.alarms?.create("cgw-native-keepalive", { periodInMinutes: 0.5 }); // reconnect if dropped
-chrome.alarms?.onAlarm.addListener((a) => { if (a.name === "cgw-native-keepalive") connectNative(); });
+chrome.alarms?.onAlarm.addListener((a) => {
+  if (a.name === "cgw-native-keepalive") connectNative();
+  else if (a.name.startsWith(CGPT_DEL_PREFIX)) swDeleteChatgpt(a.name.slice(CGPT_DEL_PREFIX.length));
+});

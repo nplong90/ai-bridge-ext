@@ -49,9 +49,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       await driver.startSend(msg.prompt, msg.images);
       const { answer, conversationId, images } = await driver.readAnswer({ waitForResponse });
       sendResponse({ ok: true, text: answer || "", conversationId, images: images || [], provider: driver.id });
-      // Keep ChatGPT conversations: read-aloud (synthesize) resolves audio by message_id and 404s
-      // ("conversation_not_found") once the chat is hidden. Gemini TTS uses arbitrary text, so its
-      // temp chats are still cleaned up.
+      // Gemini: delete the temp chat now (its TTS reads arbitrary text, not a conversation).
+      // ChatGPT: DON'T delete now — read-aloud (synthesize) 404s once the chat is hidden. The
+      // background schedules a delayed hide (see scheduleChatgptDelete) so it's cleaned up later.
       if (driver.id !== "chatgpt") driver.deleteConversation(conversationId); // fire-and-forget cleanup
     } catch (e) {
       sendResponse({ ok: false, error: String(e.message || e), provider: null });
