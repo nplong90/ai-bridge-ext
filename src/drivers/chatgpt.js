@@ -61,11 +61,23 @@ export const chatgptDriver = {
   // Read the answer from the DOM (reliable for ChatGPT, incl. background tabs).
   async readAnswer() {
     await waitFor(() => document.querySelector(SEL.stop), { tries: 150 });
-    await waitFor(() => !document.querySelector(SEL.stop), { tries: 1200 });
-    const answer = await readStable(() => {
+    const readText = () => {
       const n = document.querySelectorAll(SEL.assistant);
       return n.length ? n[n.length - 1].innerText.trim() : "";
-    });
+    };
+    // Done when generation stops (stop button gone) OR the text has held steady ~2.4s. The latter
+    // is essential for image replies: the text finishes early while the image keeps generating, so
+    // the stop button lingers (past our timeout, esp. throttled in a background tab) — waiting for
+    // it alone hangs and yields REQUEST_TIMEOUT even though the text was ready seconds in.
+    let prevText = "", steady = 0;
+    for (let i = 0; i < 1200; i++) {
+      if (!document.querySelector(SEL.stop)) break;
+      const cur = readText();
+      if (cur && cur === prevText) { if (++steady >= 8) break; } else steady = 0;
+      prevText = cur;
+      await sleep(300);
+    }
+    const answer = await readStable(readText);
     // Generated (DALL·E) images render as <img> in the assistant turn; take http(s) srcs.
     const nodes = document.querySelectorAll(SEL.assistant);
     const last = nodes[nodes.length - 1];
