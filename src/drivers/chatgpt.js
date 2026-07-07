@@ -13,6 +13,14 @@ export function parseChatgptConvId(url) {
   return m ? m[1] : null;
 }
 
+// ChatGPT "Read aloud" synthesizes an EXISTING assistant message server-side (by message_id +
+// conversation_id) and streams back audio — unlike Gemini's read-aloud which takes arbitrary
+// text. Pure URL builder so it can be unit-tested. Default voice "breeze", format "aac".
+export function buildSynthesizeUrl({ origin = ORIGIN, messageId, conversationId, voice = "breeze", format = "aac" }) {
+  const qs = new URLSearchParams({ message_id: messageId, conversation_id: conversationId, voice, format });
+  return origin + "/backend-api/synthesize?" + qs.toString();
+}
+
 async function getAccessToken() {
   const s = await fetch("/api/auth/session", { credentials: "include" });
   if (!s.ok) throw new Error("SESSION_" + s.status);
@@ -25,7 +33,7 @@ export const chatgptDriver = {
   id: "chatgpt",
   hostMatch: (h) => h === "chatgpt.com",
   newChatUrl: ORIGIN + "/",
-  capabilities: { images: false },
+  capabilities: { images: false, audio: true },
   // ChatGPT's f/conversation request bypasses page-world fetch (service worker), so
   // network interception isn't reliable — but its React DOM renders even in a
   // background tab, so DOM read works. Gemini is the opposite (see gemini.js).
@@ -53,18 +61,59 @@ export const chatgptDriver = {
   // Read the answer from the DOM (reliable for ChatGPT, incl. background tabs).
   async readAnswer() {
     await waitFor(() => document.querySelector(SEL.stop), { tries: 150 });
-    await waitFor(() => !document.querySelector(SEL.stop), { tries: 1200 });
-    const answer = await readStable(() => {
+    const readText = () => {
       const n = document.querySelectorAll(SEL.assistant);
       return n.length ? n[n.length - 1].innerText.trim() : "";
-    });
+    };
+    // Done when generation stops (stop button gone) OR the text has held steady ~2.4s. The latter
+    // is essential for image replies: the text finishes early while the image keeps generating, so
+    // the stop button lingers (past our timeout, esp. throttled in a background tab) — waiting for
+    // it alone hangs and yields REQUEST_TIMEOUT even though the text was ready seconds in.
+    let prevText = "", steady = 0;
+    for (let i = 0; i < 1200; i++) {
+      if (!document.querySelector(SEL.stop)) break;
+      const cur = readText();
+      if (cur && cur === prevText) { if (++steady >= 8) break; } else steady = 0;
+      prevText = cur;
+      await sleep(300);
+    }
+    const answer = await readStable(readText);
     // Generated (DALL·E) images render as <img> in the assistant turn; take http(s) srcs.
+    const lastImgs = () => {
+      const n = document.querySelectorAll(SEL.assistant);
+      const l = n[n.length - 1];
+      return l ? [...l.querySelectorAll("img")].map((i) => i.src).filter((s) => /^https?:/.test(s)) : [];
+    };
+    // Text settled but generation is still running (stop button up) and no image yet → an image is
+    // being created. Wait, bounded, for its <img> to render so we don't drop it; exit early the
+    // moment it appears or generation finishes. Text-only replies (stop already gone) skip this.
+    if (document.querySelector(SEL.stop) && !lastImgs().length) {
+      await waitFor(() => !document.querySelector(SEL.stop) || lastImgs().length > 0, { tries: 600, interval: 100 });
+    }
+    const images = [...new Set(lastImgs())].map((u) => ({ url: u }));
+    return { answer, conversationId: parseChatgptConvId(location.href), images };
+  },
+
+  // Read aloud the last assistant message via /backend-api/synthesize. Runs in the chatgpt.com
+  // content script (cookie'd fetch). Returns { dataUrl, mimeType } or throws.
+  async synthesizeLast(voice) {
     const nodes = document.querySelectorAll(SEL.assistant);
     const last = nodes[nodes.length - 1];
-    const images = last
-      ? [...new Set([...last.querySelectorAll("img")].map((i) => i.src).filter((s) => /^https?:/.test(s)))].map((u) => ({ url: u }))
-      : [];
-    return { answer, conversationId: parseChatgptConvId(location.href), images };
+    const messageId = last && last.getAttribute("data-message-id");
+    const conversationId = parseChatgptConvId(location.href);
+    if (!messageId || !conversationId) throw new Error("NO_CHATGPT_MESSAGE");
+    // synthesize requires the bearer access token (cookies alone → 401 "Access token is missing").
+    const token = await getAccessToken();
+    const r = await fetch(buildSynthesizeUrl({ messageId, conversationId, voice: voice || "breeze" }), {
+      headers: { authorization: "Bearer " + token },
+      credentials: "include",
+    });
+    if (!r.ok) throw new Error("SYNTHESIZE_" + r.status);
+    const bytes = new Uint8Array(await r.arrayBuffer());
+    let bin = "";
+    const CHUNK = 0x8000;
+    for (let i = 0; i < bytes.length; i += CHUNK) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+    return { dataUrl: "data:audio/aac;base64," + btoa(bin), mimeType: "audio/aac" };
   },
 
   async deleteConversation(id) {

@@ -185,6 +185,14 @@ async function sendAsk(tabId, prompt) {
   if (!resp || !resp.ok) throw new Error(resp ? resp.error : "NO_RESPONSE");
   return resp;
 }
+async function sendAskFile(tabId, payload) {
+  const resp = await withTimeout(
+    chrome.tabs.sendMessage(tabId, { channel: "cgw", type: "ASK-FILE", ...payload }),
+    REQUEST_TIMEOUT_MS, "REQUEST_TIMEOUT",
+  );
+  if (!resp || !resp.ok) throw new Error(resp ? resp.error : "NO_RESPONSE");
+  return resp;
+}
 function ask(prompt, provider) {
   return queue.enqueue(async () => {
     const driver = resolveDriver(provider);
@@ -215,7 +223,29 @@ function ask(prompt, provider) {
       images = out;
       chrome.storage.local.set({ cgw_img_debug: { images: images.map((it) => (it.dataUrl ? "dataUrl:" + Math.round(it.dataUrl.length / 1024) + "KB" : "url:" + String(it.url).slice(0, 50))) } });
     }
+    // ChatGPT temp chats aren't deleted immediately (read-aloud needs the conversation alive);
+    // schedule a delayed cleanup so history doesn't accumulate even if no follow-up ask happens.
+    if (driver.id === "chatgpt" && resp.conversationId) scheduleChatgptDelete(resp.conversationId);
     return { ...resp, images };
+  });
+}
+
+function askFile(payload) {
+  return queue.enqueue(async () => {
+    const driver = driverById("gemini"); // file upload is Gemini-only for now
+    const tabId = await ensureTab(driver);
+    await navigateNewChat(tabId, driver);
+    // Path B needs the tab foreground to render; activate it and restore afterward.
+    const prevActive = await activateTab(tabId);
+    try {
+      const resp = await sendAskFile(tabId, {
+        prompt: payload.prompt, mime: payload.mime, filename: payload.filename,
+        path: payload.path, blobUrl: payload.blobUrl, bytesB64: payload.bytesB64,
+      });
+      return { text: resp.text, conversationId: resp.conversationId, provider: "gemini" };
+    } finally {
+      if (prevActive != null) { try { await chrome.tabs.update(prevActive, { active: true }); } catch {} }
+    }
   });
 }
 
@@ -238,11 +268,23 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     );
     return true;
   }
+  if (msg && msg.type === "ASK-FILE-FROM-PANEL") {
+    const provider = "gemini"; // file upload is Gemini-only
+    writeState({ status: "sending", prompt: msg.prompt, text: "", error: "", provider, images: [] });
+    askFile({ prompt: msg.prompt, mime: msg.mime, filename: msg.filename, path: msg.path || "auto", bytesB64: msg.bytesB64 }).then(
+      (r) => { writeState({ status: "ok", prompt: msg.prompt, text: r.text, error: "", provider, images: [] }); sendResponse({ ok: true, text: r.text, provider }); },
+      (e) => { const error = String(e.message || e); writeState({ status: "error", prompt: msg.prompt, text: "", error, provider, images: [] }); sendResponse({ ok: false, error, provider }); },
+    );
+    return true;
+  }
   if (msg && msg.type === "CLEAR-STATE") { chrome.storage.local.remove(STATE_KEY); return; }
 
-  // Gemini TTS: synthesize speech for `text` and return audio bytes as a data: URL.
+  // TTS: Gemini reads arbitrary `text` (background MAIN-world RPC); ChatGPT reads back its own
+  // last assistant message via /backend-api/synthesize (content-script cookie'd fetch).
   if (msg && msg.type === "TTS-FROM-PANEL") {
-    ttsGemini(msg.text, msg.lang).then(
+    const p = msg.provider || DEFAULT_PROVIDER;
+    const job = p === "chatgpt" ? ttsChatgpt(msg.voice) : ttsGemini(msg.text, msg.lang);
+    job.then(
       (audio) => sendResponse(audio ? { ok: true, ...audio } : { ok: false, error: "NO_AUDIO" }),
       (e) => sendResponse({ ok: false, error: String(e.message || e) }),
     );
@@ -290,6 +332,18 @@ async function ttsGemini(text, lang) {
   }
   if (!r || !r.ok || !r.raw) return null;
   return parseGeminiTts(r.raw); // { dataUrl, mimeType } | null
+}
+
+// ChatGPT read-aloud: ask the chatgpt.com content script to synthesize its last assistant
+// message (needs a cookie'd fetch + the message_id from the tab's DOM). Returns { dataUrl,
+// mimeType } | null. Unlike Gemini TTS it can't voice arbitrary text — only the last answer.
+async function ttsChatgpt(voice) {
+  const tabId = await ensureTab(driverById("chatgpt"));
+  const resp = await withTimeout(
+    chrome.tabs.sendMessage(tabId, { channel: "cgw", type: "TTS-CHATGPT", voice }),
+    REQUEST_TIMEOUT_MS, "REQUEST_TIMEOUT",
+  );
+  return resp && resp.ok ? { dataUrl: resp.dataUrl, mimeType: resp.mimeType } : null;
 }
 
 // Runs in the Gemini tab's MAIN world (self-contained — no imports allowed).
@@ -341,10 +395,40 @@ function geminiDeleteInPage(conversationId) {
 const NATIVE_HOST = "com.aibridge.host";
 let nativePort = null;
 
+// ChatGPT temp-chat cleanup: hide the conversation after a delay so read-aloud (synthesize, which
+// 404s once a chat is hidden) still works, but history is cleaned up even with no follow-up ask.
+// Uses chrome.alarms (a setTimeout wouldn't survive the MV3 service worker being suspended).
+const CHATGPT_DELETE_DELAY_MIN = 5;
+const CGPT_DEL_PREFIX = "cgw-cgpt-del:";
+
+function scheduleChatgptDelete(convId) {
+  if (!convId) return;
+  chrome.alarms?.create(CGPT_DEL_PREFIX + convId, { delayInMinutes: CHATGPT_DELETE_DELAY_MIN });
+}
+
+// Hide a ChatGPT conversation straight from the service worker — no tab needed. host_permissions
+// for chatgpt.com lets a credentialed SW fetch carry the session cookie to mint the bearer token.
+async function swDeleteChatgpt(convId) {
+  try {
+    const s = await fetch("https://chatgpt.com/api/auth/session", { credentials: "include" });
+    const d = s.ok ? await s.json().catch(() => ({})) : {};
+    if (!d.accessToken) return;
+    await fetch("https://chatgpt.com/backend-api/conversation/" + convId, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", authorization: "Bearer " + d.accessToken },
+      body: JSON.stringify({ is_visible: false }),
+      credentials: "include",
+    });
+  } catch (e) { console.warn("[cgw] delayed chatgpt delete failed:", e.message || e); }
+}
+
 function handleApiOp(msg) {
   const provider = msg.provider || DEFAULT_PROVIDER;
   if (msg.op === "tts") {
     return ttsGemini(msg.text, msg.lang).then((a) => (a ? { ok: true, audio: a } : { ok: false, error: "NO_AUDIO" }));
+  }
+  if (msg.op === "askfile") {
+    return askFile(msg).then((r) => ({ ok: true, text: r.text, conversationId: r.conversationId, provider: r.provider }));
   }
   if (msg.op === "ask" || !msg.op) {
     return ask(msg.prompt, provider).then(async (r) => {
@@ -373,11 +457,20 @@ function connectNative() {
   try {
     nativePort = chrome.runtime.connectNative(NATIVE_HOST);
     nativePort.onMessage.addListener(onNativeMessage);
-    nativePort.onDisconnect.addListener(() => { nativePort = null; }); // host not installed / exited
+    nativePort.onDisconnect.addListener(() => {
+      // Read lastError so Chrome doesn't surface "Unchecked runtime.lastError: Specified native
+      // messaging host not found." The host is optional (only needed for the local HTTP API);
+      // panel-only users never install it, so a failed connect here is expected, not an error.
+      void chrome.runtime.lastError;
+      nativePort = null;
+    });
   } catch { nativePort = null; }
 }
 
 connectNative();
 chrome.runtime.onStartup?.addListener(connectNative);
 chrome.alarms?.create("cgw-native-keepalive", { periodInMinutes: 0.5 }); // reconnect if dropped
-chrome.alarms?.onAlarm.addListener((a) => { if (a.name === "cgw-native-keepalive") connectNative(); });
+chrome.alarms?.onAlarm.addListener((a) => {
+  if (a.name === "cgw-native-keepalive") connectNative();
+  else if (a.name.startsWith(CGPT_DEL_PREFIX)) swDeleteChatgpt(a.name.slice(CGPT_DEL_PREFIX.length));
+});

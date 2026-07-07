@@ -1,7 +1,39 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { chatgptDriver } from "../src/drivers/chatgpt.js";
-import { geminiDriver, scrapeTokens, buildGeminiDeleteRequest } from "../src/drivers/gemini.js";
+import { chatgptDriver, buildSynthesizeUrl } from "../src/drivers/chatgpt.js";
+
+test("buildSynthesizeUrl targets /backend-api/synthesize with message/conversation/voice/format", () => {
+  const url = buildSynthesizeUrl({ messageId: "MID", conversationId: "CID" });
+  assert.ok(url.startsWith("https://chatgpt.com/backend-api/synthesize?"));
+  const q = new URL(url).searchParams;
+  assert.equal(q.get("message_id"), "MID");
+  assert.equal(q.get("conversation_id"), "CID");
+  assert.equal(q.get("voice"), "breeze"); // default
+  assert.equal(q.get("format"), "aac");
+  assert.equal(new URL(buildSynthesizeUrl({ messageId: "M", conversationId: "C", voice: "cove" })).searchParams.get("voice"), "cove");
+});
+
+test("chatgpt driver advertises audio capability + synthesizeLast", () => {
+  assert.equal(chatgptDriver.capabilities.audio, true);
+  assert.equal(typeof chatgptDriver.synthesizeLast, "function");
+});
+import { geminiDriver, scrapeTokens, buildGeminiDeleteRequest, buildGeminiGenerateRequest, checkMime, uploadStartHeaders, isUploadTokenValid, classifyPathAResult, createPathPreference, magicForMime } from "../src/drivers/gemini.js";
+
+test("magicForMime maps media type to f.req magic (audio 4, video 2), falls back to fileMagic", () => {
+  const cfg = { freq: { fileMagic: 4, mimeMagic: { audio: 4, video: 2 } } };
+  assert.equal(magicForMime("audio/ogg", cfg), 4);
+  assert.equal(magicForMime("video/mp4", cfg), 2);
+  assert.equal(magicForMime("application/pdf", cfg), 4);
+});
+
+test("uploadStartHeaders includes Push-ID + X-Client-Pctx only when provided", () => {
+  const { headers } = uploadStartHeaders({ byteLength: 10, filename: "a.mp4", tenantId: "bard-storage", pushId: "feeds/x", clientPctx: "PCTX" });
+  assert.equal(headers["Push-ID"], "feeds/x");
+  assert.equal(headers["X-Client-Pctx"], "PCTX");
+  const { headers: h2 } = uploadStartHeaders({ byteLength: 10, filename: "a.mp4", tenantId: "bard-storage" });
+  assert.equal("Push-ID" in h2, false);
+  assert.equal("X-Client-Pctx" in h2, false);
+});
 import { DRIVERS, pickDriver, driverById, DRIVER_META } from "../src/drivers/index.js";
 
 test("chatgpt driver identity + host match", () => {
@@ -56,4 +88,66 @@ test("driverById + meta", () => {
   assert.equal(driverById("nope"), null);
   assert.equal(DRIVERS.length, 2);
   assert.deepEqual(DRIVER_META.map((d) => d.id).sort(), ["chatgpt", "gemini"]);
+});
+
+test("buildGeminiGenerateRequest embeds prompt, token, mime, filename in f.req", () => {
+  const cfg = {
+    generate: { url: "https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate", hl: "en" },
+    freq: { fileMagic: 4 },
+  };
+  const { url, body } = buildGeminiGenerateRequest({
+    prompt: "đọc nội dung", fileToken: "/contrib_service/ttl_1d/TOK", mime: "audio/ogg",
+    filename: "chunk1.ogg", at: "AT_TOK", bl: "BL", fsid: "SID", reqid: 12345, cfg,
+  });
+  assert.ok(url.startsWith(cfg.generate.url));
+  assert.ok(url.includes("f.sid=SID"));
+  assert.ok(url.includes("_reqid=12345"));
+  assert.ok(url.includes("rt=c"));
+  const params = new URLSearchParams(body);
+  const decoded = params.get("f.req");
+  assert.ok(decoded.includes("đọc nội dung"));
+  assert.ok(decoded.includes("/contrib_service/ttl_1d/TOK"));
+  assert.ok(decoded.includes("audio/ogg"));
+  assert.ok(decoded.includes("chunk1.ogg"));
+  assert.equal(params.get("at"), "AT_TOK");
+});
+
+test("checkMime flags unsupported without blocking", () => {
+  assert.deepEqual(checkMime("audio/ogg", ["audio/ogg"]), { mime: "audio/ogg", supported: true });
+  assert.deepEqual(checkMime("application/x-weird", ["audio/ogg"]), { mime: "application/x-weird", supported: false });
+});
+
+test("uploadStartHeaders sets resumable start headers + filename body", () => {
+  const { headers, body } = uploadStartHeaders({ byteLength: 1234, filename: "a.ogg", tenantId: "bard-storage" });
+  assert.equal(headers["X-Goog-Upload-Protocol"], "resumable");
+  assert.equal(headers["X-Goog-Upload-Command"], "start");
+  assert.equal(headers["X-Goog-Upload-Header-Content-Length"], "1234");
+  assert.equal(headers["X-Tenant-Id"], "bard-storage");
+  assert.equal(body, "File name: a.ogg");
+});
+
+test("isUploadTokenValid accepts contrib_service token only", () => {
+  assert.equal(isUploadTokenValid("/contrib_service/ttl_1d/abc_XYZ"), true);
+  assert.equal(isUploadTokenValid("<html>error</html>"), false);
+  assert.equal(isUploadTokenValid(""), false);
+});
+
+test("classifyPathAResult falls back on each failure signal", () => {
+  const ok = { tokensOk: true, uploadOk: true, generateStatus: 200, answer: "hi" };
+  assert.equal(classifyPathAResult(ok), "ok");
+  assert.equal(classifyPathAResult({ ...ok, tokensOk: false }), "fallback");
+  assert.equal(classifyPathAResult({ ...ok, uploadOk: false }), "fallback");
+  assert.equal(classifyPathAResult({ ...ok, generateStatus: 400 }), "fallback");
+  assert.equal(classifyPathAResult({ ...ok, answer: "" }), "fallback");
+});
+
+test("createPathPreference trips to B after N consecutive A failures, resets on success", () => {
+  const p = createPathPreference({ threshold: 3 });
+  assert.equal(p.prefer(), "A");
+  p.recordA(false); p.recordA(false);
+  assert.equal(p.prefer(), "A"); // still under threshold
+  p.recordA(false);
+  assert.equal(p.prefer(), "B"); // tripped
+  p.recordA(true);
+  assert.equal(p.prefer(), "A"); // reset
 });

@@ -172,8 +172,12 @@
 
     <div class="composer">
       <textarea id="prompt" rows="3" placeholder="Nhập prompt của bạn…" autofocus></textarea>
+      <input id="file" type="file" hidden />
       <div class="composer-foot">
-        <span class="hint"><kbd id="kbd-hint">Ctrl</kbd> + <kbd>Enter</kbd> để gửi</span>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <button id="attach" class="new-btn" type="button" title="Đính file gửi lên Gemini">📎 File</button>
+          <span id="filename" class="hint"></span>
+        </div>
         <button id="send" class="send" type="button">
           <span class="spinner"></span>
           <span class="send-label">Gửi</span>
