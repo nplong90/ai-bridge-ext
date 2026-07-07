@@ -150,7 +150,12 @@ export const geminiDriver = {
     const { headers, body } = uploadStartHeaders({ byteLength: bytes.byteLength, filename, tenantId: cfg.upload.tenantId });
     const start = await fetch(cfg.upload.url, { method: "POST", headers, body, credentials: "include" });
     const uploadUrl = start.headers.get("x-goog-upload-url");
-    if (!start.ok || !uploadUrl) return null;
+    if (!start.ok || !uploadUrl) {
+      const errBody = await start.text().catch(() => "(unreadable)");
+      const gotHeaders = {}; start.headers.forEach((v, k) => { gotHeaders[k] = v; });
+      console.log("[cgw-diag] PathA upload START failed:", { status: start.status, uploadUrl, errBody: String(errBody).slice(0, 500), respHeaders: gotHeaders });
+      return null;
+    }
     const fin = await fetch(uploadUrl, {
       method: "POST",
       headers: { "X-Goog-Upload-Command": "upload, finalize", "X-Goog-Upload-Offset": "0" },
